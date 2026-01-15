@@ -7,3 +7,7 @@ wandb/
 # Exclude outputs and PNG files
 baselines/outputs/
 baselines/*.png
+
+# Checkpoint files
+*.ckpt
+baselines/outputs/
