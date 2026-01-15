@@ -4,3 +4,6 @@ __pycache__/
 wandb/
 */logs/
 *.csv
+# Exclude outputs and PNG files
+baselines/outputs/
+baselines/*.png
