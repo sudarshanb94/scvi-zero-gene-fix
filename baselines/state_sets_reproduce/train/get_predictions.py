@@ -3,6 +3,7 @@
 import argparse
 import os
 import sys
+from pathlib import Path
 import pickle
 import re
 import gc
@@ -15,11 +16,18 @@ import pandas as pd
 import lightning.pytorch as pl
 import torch
 import wandb
+import matplotlib.pyplot as plt
+import umap
+from sklearn.decomposition import PCA
+
+# Add baselines directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from scipy.sparse import csr_matrix
+from scipy import stats
 from tqdm import tqdm
 
 from cell_load.mapping_strategies import (
@@ -30,6 +38,237 @@ from cell_load.data_modules import PerturbationDataModule
 from cell_load.utils.modules import get_datamodule
 
 torch.multiprocessing.set_sharing_strategy("file_system")
+
+
+def remove_outliers(data, method='iqr', z_threshold=3.0, iqr_factor=1.5):
+    """
+    Remove outliers from data using various methods.
+    
+    Args:
+        data: numpy array of shape (n_cells, n_genes)
+        method: 'iqr' (Interquartile Range) or 'zscore'
+        z_threshold: Z-score threshold for zscore method
+        iqr_factor: IQR factor for IQR method
+    
+    Returns:
+        mask: boolean array indicating which cells to keep
+    """
+    # Compute summary statistics per cell
+    total_expr = data.sum(axis=1)  # Total expression per cell
+    n_expressed = (data > 0).sum(axis=1)  # Number of expressed genes per cell
+    
+    if method == 'zscore':
+        # Z-score based outlier detection
+        z_scores_total = np.abs(stats.zscore(total_expr))
+        z_scores_n_exp = np.abs(stats.zscore(n_expressed))
+        mask = (z_scores_total < z_threshold) & (z_scores_n_exp < z_threshold)
+    elif method == 'iqr':
+        # IQR based outlier detection
+        q1_total, q3_total = np.percentile(total_expr, [25, 75])
+        iqr_total = q3_total - q1_total
+        lower_total = q1_total - iqr_factor * iqr_total
+        upper_total = q3_total + iqr_factor * iqr_total
+        
+        q1_n_exp, q3_n_exp = np.percentile(n_expressed, [25, 75])
+        iqr_n_exp = q3_n_exp - q1_n_exp
+        lower_n_exp = q1_n_exp - iqr_factor * iqr_n_exp
+        upper_n_exp = q3_n_exp + iqr_factor * iqr_n_exp
+        
+        mask = ((total_expr >= lower_total) & (total_expr <= upper_total) &
+                (n_expressed >= lower_n_exp) & (n_expressed <= upper_n_exp))
+    else:
+        mask = np.ones(len(data), dtype=bool)
+    
+    n_outliers = (~mask).sum()
+    logger.info(f"  Outlier removal ({method}): removed {n_outliers} / {len(data)} cells ({100*n_outliers/len(data):.1f}%)")
+    return mask
+
+
+def create_umap_from_adata(adata_real, adata_pred, datamodule, output_path, use_count_space=False, remove_outliers_pred=True):
+    """
+    Create UMAP visualization comparing generated vs true cells from AnnData files.
+    
+    Args:
+        remove_outliers_pred: If True, remove outliers from predicted data before UMAP
+    """
+    import matplotlib.pyplot as plt
+    import umap
+    from sklearn.decomposition import PCA
+    
+    logger.info("Creating UMAP from AnnData files...")
+    
+    # Extract expression data
+    if hasattr(adata_real.X, 'toarray'):
+        real_data = adata_real.X.toarray()
+    else:
+        real_data = adata_real.X
+    
+    if hasattr(adata_pred.X, 'toarray'):
+        pred_data = adata_pred.X.toarray()
+    else:
+        pred_data = adata_pred.X
+    
+    # Convert to count space if requested
+    if use_count_space:
+        logger.info("  Converting to count space...")
+        # If log-normalized, convert back to counts
+        if real_data.max() <= 25.0:
+            real_data = np.exp(real_data) - 1
+        if pred_data.max() <= 25.0:
+            pred_data = np.exp(pred_data) - 1
+        logger.info(f"  Real data range: [{real_data.min():.2f}, {real_data.max():.2f}], mean: {real_data.mean():.2f}")
+        logger.info(f"  Pred data range: [{pred_data.min():.2f}, {pred_data.max():.2f}], mean: {pred_data.mean():.2f}")
+    else:
+        logger.info("  Using log-normalized space")
+        logger.info(f"  Real data range: [{real_data.min():.2f}, {real_data.max():.2f}], mean: {real_data.mean():.2f}")
+        logger.info(f"  Pred data range: [{pred_data.min():.2f}, {pred_data.max():.2f}], mean: {pred_data.mean():.2f}")
+    
+    # Extract metadata before filtering (for real data)
+    pert_names = adata_real.obs.get('pert_name', None)
+    cell_types = adata_real.obs.get('celltype_name', None)
+    
+    # Extract metadata for predicted data before filtering
+    pert_names_pred_full = adata_pred.obs.get('pert_name', None) if hasattr(adata_pred, 'obs') else None
+    cell_types_pred_full = adata_pred.obs.get('celltype_name', None) if hasattr(adata_pred, 'obs') else None
+    
+    # Remove outliers from predicted data if requested
+    if remove_outliers_pred:
+        logger.info("  Removing outliers from generated cells...")
+        outlier_mask = remove_outliers(pred_data, method='iqr', iqr_factor=1.5)
+        pred_data = pred_data[outlier_mask]
+        # Filter metadata for predicted data
+        if pert_names_pred_full is not None:
+            pert_names_pred = pert_names_pred_full[outlier_mask]
+        else:
+            pert_names_pred = None
+        if cell_types_pred_full is not None:
+            cell_types_pred = cell_types_pred_full[outlier_mask]
+        else:
+            cell_types_pred = None
+        logger.info(f"  After outlier removal: {len(pred_data)} generated cells (removed {len(outlier_mask) - len(pred_data)})")
+    else:
+        pert_names_pred = pert_names_pred_full
+        cell_types_pred = cell_types_pred_full
+    
+    # Use all genes (no filtering)
+    logger.info(f"  Using all {real_data.shape[1]} genes for UMAP")
+    
+    # Concatenate real and predicted
+    joint_data = np.vstack([real_data, pred_data])
+    logger.info(f"  Joint data shape: {joint_data.shape}")
+    
+    # Apply PCA
+    n_pca_components = min(50, joint_data.shape[1] // 2)
+    logger.info(f"  Applying PCA: {joint_data.shape[1]} -> {n_pca_components} components")
+    pca = PCA(n_components=n_pca_components, random_state=42)
+    joint_pca = pca.fit_transform(joint_data)
+    logger.info(f"  PCA explained variance: {pca.explained_variance_ratio_.sum():.4f}")
+    
+    # Compute UMAP
+    logger.info("  Computing UMAP on PCA-projected joint space...")
+    reducer = umap.UMAP(
+        n_components=2,
+        n_neighbors=min(30, len(joint_pca) // 10),
+        min_dist=0.05,
+        random_state=42,
+        metric='euclidean'
+    )
+    joint_umap = reducer.fit_transform(joint_pca)
+    
+    # Split back
+    n_real = len(real_data)
+    real_umap = joint_umap[:n_real]
+    pred_umap = joint_umap[n_real:]
+    
+    # Metadata already extracted above
+    
+    # Create plot
+    fig, axes = plt.subplots(2, 2, figsize=(16, 16))
+    fig.suptitle('Generated vs True Cells - UMAP Comparison', fontsize=16, fontweight='bold')
+    
+    # Plot 1: Overlay
+    ax = axes[0, 0]
+    ax.scatter(real_umap[:, 0], real_umap[:, 1], 
+              c='blue', alpha=0.4, s=15, label='True', edgecolors='white', linewidth=0.2)
+    ax.scatter(pred_umap[:, 0], pred_umap[:, 1], 
+              c='red', alpha=0.4, s=15, label='Generated', edgecolors='white', linewidth=0.2)
+    ax.set_xlabel('UMAP 1')
+    ax.set_ylabel('UMAP 2')
+    ax.set_title('Overlay: True (Blue) vs Generated (Red)', fontweight='bold')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Plot 2: True colored by perturbation
+    ax = axes[0, 1]
+    if pert_names is not None:
+        unique_perts = np.unique(pert_names)
+        colors = plt.cm.tab20(np.linspace(0, 1, len(unique_perts)))
+        for i, pert in enumerate(unique_perts[:20]):  # Limit to 20 for readability
+            mask = pert_names == pert
+            ax.scatter(real_umap[mask, 0], real_umap[mask, 1], 
+                      c=[colors[i]], label=pert if i < 10 else None,
+                      alpha=0.6, s=20, edgecolors='white', linewidth=0.3)
+    else:
+        ax.scatter(real_umap[:, 0], real_umap[:, 1], c='blue', alpha=0.6, s=20)
+    ax.set_xlabel('UMAP 1')
+    ax.set_ylabel('UMAP 2')
+    ax.set_title('True Data - Colored by Perturbation', fontweight='bold')
+    if pert_names is not None and len(unique_perts) <= 10:
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+    ax.grid(True, alpha=0.3)
+    
+    # Plot 3: Generated colored by perturbation
+    ax = axes[1, 0]
+    pert_names_to_use = pert_names_pred if pert_names_pred is not None else pert_names
+    if pert_names_to_use is not None and len(pert_names_to_use) == len(pred_umap):
+        unique_perts_pred = np.unique(pert_names_to_use)
+        colors_pred = plt.cm.tab20(np.linspace(0, 1, len(unique_perts_pred)))
+        for i, pert in enumerate(unique_perts_pred[:20]):
+            mask = pert_names_to_use == pert
+            ax.scatter(pred_umap[mask, 0], pred_umap[mask, 1], 
+                      c=[colors_pred[i]], label=pert if i < 10 else None,
+                      alpha=0.6, s=20, edgecolors='white', linewidth=0.3)
+    else:
+        ax.scatter(pred_umap[:, 0], pred_umap[:, 1], c='red', alpha=0.6, s=20)
+    ax.set_xlabel('UMAP 1')
+    ax.set_ylabel('UMAP 2')
+    ax.set_title('Generated Data - Colored by Perturbation', fontweight='bold')
+    if pert_names is not None and len(unique_perts) <= 10:
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+    ax.grid(True, alpha=0.3)
+    
+    # Plot 4: Colored by cell type
+    ax = axes[1, 1]
+    cell_types_to_use = cell_types_pred if cell_types_pred is not None else cell_types
+    if cell_types is not None:
+        unique_cts = np.unique(cell_types)
+        colors_ct = plt.cm.Set3(np.linspace(0, 1, len(unique_cts)))
+        for i, ct in enumerate(unique_cts[:15]):
+            mask = cell_types == ct
+            ax.scatter(real_umap[mask, 0], real_umap[mask, 1], 
+                      c=[colors_ct[i]], label=ct if i < 15 else None,
+                      alpha=0.6, s=20, edgecolors='white', linewidth=0.3)
+        # Plot predicted with filtered cell types
+        if cell_types_to_use is not None and len(cell_types_to_use) == len(pred_umap):
+            for i, ct in enumerate(unique_cts[:15]):
+                mask = cell_types_to_use == ct
+                if mask.sum() > 0:
+                    ax.scatter(pred_umap[mask, 0], pred_umap[mask, 1], 
+                              c=[colors_ct[i]], alpha=0.6, s=20, edgecolors='white', linewidth=0.3, marker='x')
+    else:
+        ax.scatter(real_umap[:, 0], real_umap[:, 1], c='blue', alpha=0.6, s=20, label='True')
+        ax.scatter(pred_umap[:, 0], pred_umap[:, 1], c='red', alpha=0.6, s=20, label='Generated', marker='x')
+    ax.set_xlabel('UMAP 1')
+    ax.set_ylabel('UMAP 2')
+    ax.set_title('True (dots) vs Generated (x) - Colored by Cell Type', fontweight='bold')
+    if cell_types is not None and len(unique_cts) <= 15:
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    logger.info(f"Saved UMAP plot to {output_path}")
+    plt.close()
 
 
 def parse_args():
@@ -52,6 +291,30 @@ def parse_args():
         type=str,
         default="last.ckpt",
         help="Checkpoint filename. Default is 'last.ckpt'. Relative to the output directory.",
+    )
+    parser.add_argument(
+        "--split",
+        "-s",
+        type=str,
+        default="test",
+        choices=["train", "val", "test"],
+        help="Which data split to use for generation. Default is 'test'.",
+    )
+    parser.add_argument(
+        "--create_umap",
+        action="store_true",
+        help="Create UMAP visualization comparing generated vs true cells",
+    )
+    parser.add_argument(
+        "--use_count_space",
+        action="store_true",
+        help="Use raw count space instead of log-normalized for UMAP",
+    )
+    parser.add_argument(
+        "--max_batches",
+        type=int,
+        default=None,
+        help="Maximum number of batches to process (for faster generation/testing)",
     )
 
     return parser.parse_args()
@@ -289,12 +552,21 @@ def main():
             "transformer_backbone_kwargs"
         ]["n_positions"]
 
-    test_loader = data_module.test_dataloader()
+    # Get dataloader based on split
+    if args.split == "train":
+        dataloader = data_module.train_dataloader()
+        logger.info(f"Using TRAIN dataloader for generation")
+    elif args.split == "val":
+        dataloader = data_module.val_dataloader()
+        logger.info(f"Using VAL dataloader for generation")
+    else:
+        dataloader = data_module.test_dataloader()
+        logger.info(f"Using TEST dataloader for generation")
 
     print(f"DEBUG: data_module.batch_size: {data_module.batch_size}")
 
-    if test_loader is None:
-        logger.warning("No test dataloader found. Exiting.")
+    if dataloader is None:
+        logger.warning(f"No {args.split} dataloader found. Exiting.")
         sys.exit(0)
 
     # num_cells = test_loader.batch_sampler.tot_num
@@ -302,7 +574,7 @@ def main():
     # gene_dim = var_dims["gene_dim"]
     # hvg_dim = var_dims["hvg_dim"]
 
-    logger.info("Generating predictions on test set using manual loop...")
+    logger.info(f"Generating predictions on {args.split} set using manual loop...")
     device = next(model.parameters()).device
 
     final_preds = []
@@ -330,7 +602,7 @@ def main():
         final_X_hvg = None
         final_gene_preds = None
 
-    logger.info("Generating predictions on test set ...")
+    logger.info(f"Generating predictions on {args.split} set ...")
 
     # Initialize aggregation variables directly
     all_pert_names = []
@@ -340,8 +612,12 @@ def main():
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(
-            tqdm(test_loader, desc="Predicting", unit="batch")
+            tqdm(dataloader, desc="Predicting", unit="batch")
         ):
+            if args.max_batches is not None and batch_idx >= args.max_batches:
+                logger.info(f"Stopping after {args.max_batches} batches (as requested)")
+                break
+            
             # Move each tensor in the batch to the model's device
             batch = {
                 k: (v.to(device) if isinstance(v, torch.Tensor) else v)
@@ -471,24 +747,47 @@ def main():
             final_gene_preds = np.log1p(final_gene_preds)
         adata_pred_gene = anndata.AnnData(X=final_gene_preds, obs=obs)
 
-    # save out adata_real to the output directory
-    adata_real_out = os.path.join(args.output_dir, "adata_real.h5ad")
+    # save out adata_real to the output directory (with split suffix)
+    adata_real_out = os.path.join(args.output_dir, f"adata_real_{args.split}.h5ad")
     adata_real.write_h5ad(adata_real_out)
     logger.info(f"Saved adata_real to {adata_real_out}")
 
-    adata_pred_out = os.path.join(args.output_dir, "adata_pred.h5ad")
+    adata_pred_out = os.path.join(args.output_dir, f"adata_pred_{args.split}.h5ad")
     adata_pred.write_h5ad(adata_pred_out)
     logger.info(f"Saved adata_pred to {adata_pred_out}")
 
     if adata_real_gene is not None:
-        adata_real_gene_out = os.path.join(args.output_dir, "adata_real_gene.h5ad")
+        adata_real_gene_out = os.path.join(args.output_dir, f"adata_real_gene_{args.split}.h5ad")
         adata_real_gene.write_h5ad(adata_real_gene_out)
         logger.info(f"Saved adata_real_gene to {adata_real_gene_out}")
 
     if adata_pred_gene is not None:
-        adata_pred_gene_out = os.path.join(args.output_dir, "adata_pred_gene.h5ad")
+        adata_pred_gene_out = os.path.join(args.output_dir, f"adata_pred_gene_{args.split}.h5ad")
         adata_pred_gene.write_h5ad(adata_pred_gene_out)
         logger.info(f"Saved adata_pred_gene to {adata_pred_gene_out}")
+
+    # Create UMAP visualization if requested
+    if args.create_umap:
+        logger.info("Creating UMAP visualization...")
+        # First UMAP without outlier removal
+        create_umap_from_adata(
+            adata_real, 
+            adata_pred, 
+            data_module,
+            output_path=os.path.join(args.output_dir, f"umap_generated_{args.split}.png"),
+            use_count_space=args.use_count_space,
+            remove_outliers_pred=False
+        )
+        # Second UMAP with outlier removal
+        logger.info("Creating UMAP visualization (with outlier removal)...")
+        create_umap_from_adata(
+            adata_real, 
+            adata_pred, 
+            data_module,
+            output_path=os.path.join(args.output_dir, f"umap_generated_{args.split}_no_outliers.png"),
+            use_count_space=args.use_count_space,
+            remove_outliers_pred=True
+        )
 
 
 if __name__ == "__main__":

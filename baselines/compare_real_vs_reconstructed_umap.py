@@ -25,9 +25,12 @@ from omegaconf import OmegaConf
 import yaml
 
 
-def extract_embeddings_and_reconstructions(model, dataloader, device='cuda', max_batches=None):
+def extract_embeddings_and_reconstructions(model, dataloader, device='cuda', max_batches=None, use_count_space=False):
     """
     Extract latent embeddings and reconstructions from the model.
+    
+    Args:
+        use_count_space: If True, extract raw counts instead of log-normalized values
     
     Returns:
         real_data: numpy array of real expression data
@@ -54,37 +57,47 @@ def extract_embeddings_and_reconstructions(model, dataloader, device='cuda', max
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v 
                     for k, v in batch.items()}
             
-            # Use model's predict_step method (matches state repo approach)
-            # This returns log-normalized predictions matching the state repo
-            batch_preds = model.predict_step(batch, batch_idx)
-            
-            # Extract predictions and real data (both are log-normalized by predict_step)
-            x_recon_log = batch_preds["preds"].cpu().numpy()  # Already log-normalized via _log_normalize_expression
-            x_real_log = batch_preds["X"].cpu().numpy()  # Already log-normalized via _log_normalize_expression
-            
-            # Also get latent embeddings for UMAP
-            # Need to call forward separately to get encoder outputs
+            # Extract batch tensors
             x_pert, x_basal, pert, cell_type, batch_ids = model.extract_batch_tensors(batch)
             
             # Convert to counts if needed (for encoder)
-            # Note: If data is raw counts (max > 25.0), use directly. 
-            # If log-normalized (max <= 25.0), convert back to counts.
-            # scVI module.forward expects counts for ZINB/NB distributions.
             if x_basal.max() <= 25.0:
                 x_basal_counts = torch.exp(x_basal) - 1
             else:
                 x_basal_counts = x_basal  # Already raw counts
             
-            # Forward pass to get latent embeddings
+            # Forward pass to get decoder outputs
             encoder_outputs, decoder_outputs = model.module.forward(
                 x_basal_counts, pert, cell_type, batch_ids
             )
+            
+            # Get latent embeddings
             z_basal = encoder_outputs["z_basal"].cpu().numpy()
             
-            # Store results (both are log-normalized, matching state repo)
-            real_data_list.append(x_real_log)
+            # Extract predictions and real data
+            if use_count_space:
+                # Get raw counts from the distribution
+                px = decoder_outputs["px"]
+                if model.recon_loss == "gauss":
+                    x_recon = px.loc.cpu().numpy()
+                else:
+                    x_recon = px.mu.cpu().numpy()  # Mean of ZINB/NB distribution (count space)
+                
+                # Get real data in count space
+                if x_pert.max() <= 25.0:
+                    x_real = (torch.exp(x_pert) - 1).cpu().numpy()
+                else:
+                    x_real = x_pert.cpu().numpy()
+            else:
+                # Use log-normalized (original approach)
+                batch_preds = model.predict_step(batch, batch_idx)
+                x_recon = batch_preds["preds"].cpu().numpy()
+                x_real = batch_preds["X"].cpu().numpy()
+            
+            # Store results
+            real_data_list.append(x_real)
             latent_list.append(z_basal)
-            reconstructed_list.append(x_recon_log)
+            reconstructed_list.append(x_recon)
             
             # Extract metadata
             if isinstance(pert, torch.Tensor):
@@ -102,7 +115,7 @@ def extract_embeddings_and_reconstructions(model, dataloader, device='cuda', max
                 else:
                     cell_type_idx = cell_type.cpu().numpy()
             else:
-                cell_type_idx = np.array([0] * len(x_real))
+                cell_type_idx = np.array([0] * batch_size)
             cell_type_list.append(cell_type_idx)
             
             if isinstance(batch_ids, torch.Tensor):
@@ -111,7 +124,7 @@ def extract_embeddings_and_reconstructions(model, dataloader, device='cuda', max
                 else:
                     batch_idx_arr = batch_ids.cpu().numpy()
             else:
-                batch_idx_arr = np.array([0] * len(x_real))
+                batch_idx_arr = np.array([0] * batch_size)
             batch_list.append(batch_idx_arr)
     
     # Concatenate all batches
@@ -296,10 +309,12 @@ def main():
                        help='Path to saved data module (.pkl file)')
     parser.add_argument('--output', type=str, default='./real_vs_reconstructed_umap.png',
                        help='Output path for the comparison plot')
-    parser.add_argument('--max_batches', type=int, default=None,
-                       help='Maximum number of batches to process (for faster testing)')
+    parser.add_argument('--max_batches', type=int, default=5,
+                       help='Maximum number of batches to process (default: 5 for faster UMAP)')
     parser.add_argument('--split', type=str, default='train', choices=['train', 'val', 'test'],
                        help='Which data split to use')
+    parser.add_argument('--use_count_space', action='store_true',
+                       help='Use raw count space instead of log-normalized for UMAP')
     
     args = parser.parse_args()
     
@@ -351,8 +366,14 @@ def main():
     
     # Extract embeddings and reconstructions
     print("Extracting embeddings and reconstructions...")
+    if args.use_count_space:
+        print("  Using COUNT SPACE (raw counts) for UMAP")
+    else:
+        print("  Using LOG-NORMALIZED space for UMAP")
+    if args.max_batches:
+        print(f"  Limiting to {args.max_batches} batches for faster processing")
     real_data, latent_embeddings, reconstructed_data, metadata = extract_embeddings_and_reconstructions(
-        model, dataloader, device=device, max_batches=args.max_batches
+        model, dataloader, device=device, max_batches=args.max_batches, use_count_space=args.use_count_space
     )
     
     print(f"Extracted {len(real_data)} cells")
@@ -362,65 +383,36 @@ def main():
     print(f"  Reconstructed data shape: {reconstructed_data.shape}")
     print(f"    Reconstructed data range: [{reconstructed_data.min():.2f}, {reconstructed_data.max():.2f}], mean: {reconstructed_data.mean():.2f}")
     
-    # Filter to only non-zero positions in ground truth
-    print("Filtering to non-zero positions in ground truth...")
+    # Check perturbations
+    unique_perts = np.unique(metadata['perturbation'])
+    print(f"\n  Perturbations in data:")
+    print(f"    Number of unique perturbations: {len(unique_perts)}")
+    if datamodule and hasattr(datamodule, 'pert_onehot_map'):
+        pert_map = datamodule.pert_onehot_map
+        pert_names = list(pert_map.keys())
+        print(f"    Perturbation names: {pert_names[:10]}{'...' if len(pert_names) > 10 else ''}")
+        print(f"    Total perturbations in dataset: {len(pert_names)}")
+    else:
+        print(f"    Perturbation indices: {unique_perts[:20]}{'...' if len(unique_perts) > 20 else ''}")
+    
+    # Count cells per perturbation
+    pert_counts = {p: (metadata['perturbation'] == p).sum() for p in unique_perts}
+    print(f"    Cells per perturbation: min={min(pert_counts.values())}, max={max(pert_counts.values())}, mean={np.mean(list(pert_counts.values())):.1f}")
+    
+    # Use all genes for UMAP (no filtering) - matches inference scenario
+    print("Using all genes for UMAP (no zero filtering)...")
     print(f"  Real data shape: {real_data.shape}")
     print(f"  Reconstructed data shape: {reconstructed_data.shape}")
     
-    # Create mask for non-zero positions in real data
-    # For each cell, find which genes are non-zero
+    # Statistics about zeros
     non_zero_mask = real_data > 0  # (n_cells, n_genes) boolean mask
-    
     print(f"  Non-zero positions in real data: {non_zero_mask.sum()} / {non_zero_mask.size} ({100 * non_zero_mask.sum() / non_zero_mask.size:.1f}%)")
     
-    # For each cell, extract only the non-zero genes
-    # We'll create a sparse representation: for each cell, keep only non-zero genes
-    # But for UMAP, we need fixed-size vectors, so we'll use a different approach:
-    # Option 1: Use only genes that are non-zero in at least some cells
-    # Option 2: For each cell, pad with zeros (but this defeats the purpose)
-    # Option 3: Use the mask to weight the data, but still use all genes
+    # Use all genes (no filtering) - this matches what happens during inference
+    print("\n  Creating joint dataset with ALL genes (no filtering)...")
     
-    # Actually, let's use a better approach: only use genes that are non-zero in at least X% of cells
-    # This filters out always-zero genes while keeping the structure
-    
-    # But the user wants to compare non-zero positions directly
-    # So let's create a representation where we only consider non-zero positions
-    # We'll use the mask to create a filtered dataset
-    
-    # Approach: For each cell, create a vector of only non-zero values
-    # But this creates variable-length vectors, which won't work for UMAP
-    # Instead, let's mask the data: set zero positions to NaN, then use only non-NaN positions
-    
-    # Better approach: Create a joint dataset where we concatenate real and reconstructed,
-    # but only include positions where real data is non-zero
-    print("\n  Creating joint dataset with only non-zero positions from ground truth...")
-    
-    # Mask: where real data is zero, set both real and reconstructed to 0 (or NaN)
-    # Actually, let's keep the structure but only weight/consider non-zero positions
-    
-    # User's request: "umap the non zero in ground truth with the corresponding counts in reconstructed"
-    # This means: for each cell, only use genes where real > 0, and compare with reconstructed at those same positions
-    
-    # Since UMAP needs fixed-size vectors, we'll:
-    # 1. Keep all genes but mask out zeros in the distance calculation
-    # 2. OR: Only use genes that are non-zero in at least some cells
-    
-    # Let's go with approach: filter to genes that are non-zero in at least 1% of cells
-    # This removes always-zero genes while keeping the structure
-    gene_nonzero_freq = (real_data > 0).mean(axis=0)  # Frequency of non-zero per gene
-    active_genes = gene_nonzero_freq > 0.01  # Genes non-zero in at least 1% of cells
-    
-    print(f"  Active genes (non-zero in >1% of cells): {active_genes.sum()} / {len(active_genes)} ({100 * active_genes.sum() / len(active_genes):.1f}%)")
-    
-    # Filter data to only active genes
-    real_filtered = real_data[:, active_genes]
-    recon_filtered = reconstructed_data[:, active_genes]
-    
-    print(f"  Filtered real data shape: {real_filtered.shape}")
-    print(f"  Filtered reconstructed data shape: {recon_filtered.shape}")
-    
-    # Now concatenate real and reconstructed
-    joint_data = np.vstack([real_filtered, recon_filtered])
+    # Concatenate real and reconstructed (using all genes)
+    joint_data = np.vstack([real_data, reconstructed_data])
     print(f"  Joint data shape (concatenated): {joint_data.shape}")
     
     # Apply PCA on the concatenated data

@@ -11,9 +11,10 @@ cd /work/baselines
 source .venv/bin/activate
 
 # Default values - use latest checkpoint
-LATEST_CKPT=$(ls -t ./outputs/scvi_experiment/checkpoints/step=*.ckpt 2>/dev/null | head -1)
-CHECKPOINT=${1:-${LATEST_CKPT:-"./outputs/scvi_experiment/checkpoints/final.ckpt"}}
-DATA_MODULE=${2:-"./outputs/scvi_experiment/data_module.pkl"}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-"scvi_experiment_zi_temperature_zero_loss_v3"}
+LATEST_CKPT=$(ls -t ./outputs/${EXPERIMENT_NAME}/checkpoints/step=*.ckpt 2>/dev/null | head -1)
+CHECKPOINT=${1:-${LATEST_CKPT:-"./outputs/${EXPERIMENT_NAME}/checkpoints/final.ckpt"}}
+DATA_MODULE=${2:-"./outputs/${EXPERIMENT_NAME}/data_module.pkl"}
 OUTPUT=${3:-"./real_vs_reconstructed_umap.png"}
 SPLIT=${4:-"train"}
 

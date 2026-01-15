@@ -22,7 +22,7 @@ python -m state_sets_reproduce.train \
     model=scvi \
     training=scvi \
     output_dir="./outputs" \
-    name="scvi_experiment_zi_temperature_zero_loss_v2" \
+    name="scvi_experiment_zi_temperature_zero_loss_v3" \
     use_wandb=false \
     overwrite=false
 

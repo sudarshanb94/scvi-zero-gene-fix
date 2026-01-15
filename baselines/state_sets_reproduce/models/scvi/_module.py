@@ -270,7 +270,7 @@ class scVIModule(nn.Module):
             # Lower temperature (< 1.0) makes probabilities more extreme, biasing towards zeros
             # This is applied globally to all genes and works during both training and inference
 
-            px_dropout = px_dropout / self.zi_temperature
+            #px_dropout = px_dropout / self.zi_temperature
 
             px = ZeroInflatedNegativeBinomial(
                 mu=px_rate,
