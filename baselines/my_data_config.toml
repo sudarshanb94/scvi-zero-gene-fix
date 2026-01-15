@@ -1,0 +1,22 @@
+# TOML configuration for scVI training
+# Using mini_train_hvg for training and mini_valid_hvg for validation
+
+[datasets]
+# Training dataset - contains sharded h5ad files
+train_data = "/mnt/data/Marson/ML_splits/donor_timepoint_single_guide_fewshot_allG_sharded/mini_train_hvg"
+# Validation dataset - contains sharded h5ad files  
+valid_data = "/mnt/data/Marson/ML_splits/donor_timepoint_single_guide_fewshot_allG_sharded/mini_valid_hvg"
+
+[training]
+# Use train_data for training
+train_data = "train"
+
+# Optional: You can also add valid_data here if needed, but typically validation
+# is handled automatically or through the splits below
+
+# Zero-shot evaluation tasks (leave empty if not using)
+[zeroshot]
+
+# Few-shot evaluation tasks (leave empty if not using)
+[fewshot]
+

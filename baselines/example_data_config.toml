@@ -1,0 +1,36 @@
+# TOML configuration file for scVI training
+# 
+# IMPORTANT: The path below should point to a DIRECTORY containing your h5ad files.
+# The code will automatically find and load ALL .h5 and .h5ad files in that directory.
+# 
+# Example: If your data is sharded like:
+#   /data/my_experiment/
+#     ├── shard_001.h5ad
+#     ├── shard_002.h5ad
+#     ├── shard_003.h5ad
+#     └── ...
+# 
+# Then set: my_dataset = "/data/my_experiment/"
+# 
+# The code will automatically load all shard_*.h5ad files!
+
+[datasets]
+# Replace this with your actual data directory path
+# The directory should contain your sharded .h5ad files
+my_dataset = "/path/to/your/data/directory/"
+
+[training]
+# Specify which dataset to use for training (set to "train")
+my_dataset = "train"
+
+# Optional: Zero-shot evaluation tasks (leave empty if not using)
+[zeroshot]
+
+# Optional: Few-shot evaluation tasks (leave empty if not using)
+[fewshot]
+
+# Example few-shot configuration (uncomment and modify if needed):
+# [fewshot."my_dataset.cell_type_name"]
+# val = ['perturbation1', 'perturbation2', 'perturbation3']
+# test = ['perturbation4', 'perturbation5', 'perturbation6']
+

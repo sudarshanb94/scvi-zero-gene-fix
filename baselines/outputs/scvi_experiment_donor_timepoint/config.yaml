@@ -1,0 +1,76 @@
+data:
+  name: PerturbationDataModule
+  kwargs:
+    toml_config_path: /work/baselines/my_data_config.toml
+    embed_key: null
+    output_space: gene
+    pert_rep: onehot
+    basal_rep: sample
+    num_workers: 8
+    pin_memory: true
+    n_basal_samples: 1
+    basal_mapping_strategy: random
+    should_yield_control_cells: true
+    batch_col: donor_id
+    pert_col: guide_target_gene_symbol
+    cell_type_key: experimental_perturbation_time_point
+    control_pert: NTC
+    map_controls: true
+    perturbation_features_file: null
+    store_raw_basal: false
+    int_counts: false
+    barcode: true
+    batch_size: 128
+    cell_sentence_len: 1
+  output_dir: null
+  debug: true
+model:
+  name: scVI
+  checkpoint: null
+  device: cuda
+  kwargs:
+    n_latent: 84
+    recon_loss: zinb
+    pert_embeddings: null
+    hidden_dim: 256
+    n_hidden_encoder: 512
+    n_layers_encoder: 2
+    n_hidden_decoder: 512
+    n_layers_decoder: 2
+    use_batch_norm: both
+    use_layer_norm: none
+    dropout_rate_encoder: 0.1
+    dropout_rate_decoder: 0.1
+    expr_transform: none
+    seed: 2025
+    cell_sentence_len: 1
+    residual_decoder: false
+    nb_decoder: false
+    control_pert: NTC
+    n_cell_types: 3
+    n_perts: 10575
+    n_batches: 4
+training:
+  max_steps: 250000
+  train_seed: 42
+  val_freq: 5000
+  test_freq: 9000
+  gradient_clip_val: 10
+  n_epochs_kl_warmup: 10000.0
+  lr: 0.0005
+  wd: 4.0e-07
+  step_size_lr: 25
+  do_clip_grad: false
+  batch_size: 128
+wandb:
+  project: state-sets-reproduce
+  entity: mohsen
+  local_wandb_dir: ./wandb_logs
+  tags: []
+name: scvi_experiment_donor_timepoint
+output_dir: ./outputs
+use_wandb: false
+overwrite: false
+return_adatas: false
+pred_adata_path: null
+true_adata_path: null

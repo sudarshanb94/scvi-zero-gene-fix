@@ -98,6 +98,7 @@ class scVIModule(nn.Module):
         use_layer_norm: str = "none",
         dropout_rate_encoder: float = 0.0,
         dropout_rate_decoder: float = 0.0,
+        zi_temperature: float = 0.05,  # Temperature scaling for zero-inflation logits (lower = more extreme, biases towards zeros)
         seed: int = 0,
     ):
         super().__init__()
@@ -116,6 +117,7 @@ class scVIModule(nn.Module):
         self.n_pert_latent = n_pert_latent
         self.n_perts = n_perts
         self.recon_loss = recon_loss
+        self.zi_temperature = zi_temperature  # Temperature for zero-inflation logits
 
         self.encoder = VariationalEncoder(
             n_genes,
@@ -264,6 +266,12 @@ class scVIModule(nn.Module):
             px_scale, _, px_rate, px_dropout = self.decoder("gene", z, library)
             px_r = torch.exp(self.px_r)
 
+            # Apply temperature scaling to zero-inflation logits
+            # Lower temperature (< 1.0) makes probabilities more extreme, biasing towards zeros
+            # This is applied globally to all genes and works during both training and inference
+
+            px_dropout = px_dropout / self.zi_temperature
+
             px = ZeroInflatedNegativeBinomial(
                 mu=px_rate,
                 theta=px_r,
@@ -282,13 +290,65 @@ class scVIModule(nn.Module):
     def loss(self, x_pert, encoder_outputs, decoder_outputs):
         """Computes the reconstruction loss (AE) or the ELBO (VAE)"""
         px = decoder_outputs["px"]
+        
         recon_loss = -px.log_prob(x_pert).sum(dim=-1).mean()
+
+        # Zero loss: ensure zi_probs (sigmoid of zi_logits) is high where ground truth is zero
+        # This penalizes the model for not predicting zeros where the data is actually zero
+        if self.recon_loss == "zinb":
+            # Create mask for all zero positions in ground truth
+            zero_mask = (x_pert == 0)  # Shape: (batch_size, n_genes)
+            
+            # Get zero-inflation probabilities (sigmoid of zi_logits)
+            zi_probs = px.zi_probs  # Shape: (batch_size, n_genes)
+            
+            # We want zi_probs to be high (close to 1) where x_pert is zero
+            # Loss: penalize when zi_probs is low at zero positions
+            # Using cross-entropy style: -log(zi_probs) at zero positions
+            # Or L2: (1 - zi_probs)^2 at zero positions
+            if zero_mask.any():
+                # Get zi_probs at zero positions
+                zi_probs_at_zeros = zi_probs[zero_mask]
+                
+                # Cross-entropy style loss: penalize low zi_probs
+                # We want zi_probs close to 1, so loss = -log(zi_probs)
+                # Add small epsilon to avoid log(0)
+                zero_loss = -torch.log(zi_probs_at_zeros + 1e-8).mean()
+                
+                # Apply weight multiplier to strengthen zero loss
+                # Higher weight = stronger constraint on zero predictions
+                zero_loss_weight = 300.0
+                zero_loss = zero_loss_weight * zero_loss
+                
+                # Add to reconstruction loss
+                recon_loss = recon_loss + zero_loss
 
         qz = encoder_outputs["qz"]
         pz = decoder_outputs["pz"]
 
         kl_divergence_z = kl(qz, pz).sum(dim=1)
         kl_loss = kl_divergence_z.mean()
+
+        # COMMENTED OUT: Zero penalty - testing only Bernoulli (zi_logits) modification
+        # This penalizes the mean predictions, while zi_logits modification handles the Bernoulli
+        # if always_zero_mask.any():
+        #     # Get predicted means for these genes
+        #     if self.recon_loss == "gauss":
+        #         pred_means = px.loc
+        #     else:
+        #         pred_means = px.mu
+        #     
+        #     # Penalize non-zero predictions for always-zero genes
+        #     # Use L2 penalty for smoother gradients, and also penalize max to prevent outliers
+        #     always_zero_preds = pred_means[:, always_zero_mask]
+        #     zero_penalty_l2 = (always_zero_preds ** 2).mean()
+        #     zero_penalty_max = always_zero_preds.max()  # Penalize worst-case predictions
+        #     
+        #     # Stronger penalty: increased weight significantly to strongly constrain always-zero genes
+        #     # Scale by fraction of always-zero genes, but use minimum weight of 0.5
+        #     # Note: For ZINB, this works together with the zi_logits modification above
+        #     zero_penalty_weight = max(0.5, 10.0 * (always_zero_mask.sum().float() / x_pert.shape[1]))
+        #     recon_loss = recon_loss + zero_penalty_weight * (zero_penalty_l2 + 0.1 * zero_penalty_max)
 
         return recon_loss, kl_loss
 
