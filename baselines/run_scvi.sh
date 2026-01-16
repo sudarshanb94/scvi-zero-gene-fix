@@ -109,6 +109,12 @@ if ! $PYTHON_BIN -c "import wandb" 2>/dev/null; then
     $PIP_BIN install wandb==0.20.1
 fi
 
+# Install transformers if missing
+if ! $PYTHON_BIN -c "import transformers" 2>/dev/null; then
+    echo "Installing transformers..."
+    $PIP_BIN install transformers==4.52.4
+fi
+
 # Verify critical packages are installed one by one with better error messages
 echo "Verifying critical packages..."
 MISSING=()
@@ -127,6 +133,10 @@ fi
 
 if ! $PYTHON_BIN -c "import wandb" 2>/dev/null; then
     MISSING+=("wandb")
+fi
+
+if ! $PYTHON_BIN -c "import transformers" 2>/dev/null; then
+    MISSING+=("transformers")
 fi
 
 if [ ${#MISSING[@]} -gt 0 ]; then
@@ -161,6 +171,10 @@ if [ ${#MISSING[@]} -gt 0 ]; then
                 echo "Installing wandb..."
                 $PIP_BIN install wandb==0.20.1
                 ;;
+            "transformers")
+                echo "Installing transformers..."
+                $PIP_BIN install transformers==4.52.4
+                ;;
         esac
     done
     
@@ -187,6 +201,7 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     fi
     
     $PYTHON_BIN -c "import wandb" || { echo "ERROR: wandb import failed"; exit 1; }
+    $PYTHON_BIN -c "import transformers" || { echo "ERROR: transformers import failed"; exit 1; }
     echo "✓ All critical packages installed"
 else
     echo "✓ All critical packages installed"
