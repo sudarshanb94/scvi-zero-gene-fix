@@ -39,9 +39,13 @@ fi
 # Activate the environment
 source .venv/bin/activate
 
-# Install all packages from requirements.txt using uv
-echo "Installing packages from requirements.txt with uv..."
-uv pip install -r requirements.txt
+# Upgrade pip first
+pip install --upgrade pip
+
+# Install all packages from requirements.txt using pip
+# (uv pip doesn't support editable Git URLs, so we use regular pip)
+echo "Installing packages from requirements.txt..."
+pip install -r requirements.txt
 
 # Increase file descriptor limit for large datasets (978 files in train_hvg)
 # Set to a high value to handle many open files during data loading
