@@ -123,12 +123,18 @@ if ! $PYTHON_BIN -c "import torch_scatter" 2>/dev/null; then
         echo "torch is not installed, installing it first..."
         $PIP_BIN install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121 || $PIP_BIN install torch==2.4.1
     fi
-    # Try to install from PyTorch Geometric index (has pre-built wheels, avoids build issues)
-    echo "Trying to install torch-scatter from PyG index..."
-    $PIP_BIN install torch-scatter --extra-index-url https://data.pyg.org/whl/torch-2.4.0+cu121.html || \
-    $PIP_BIN install torch-scatter --extra-index-url https://data.pyg.org/whl/torch-2.4.0+cpu.html || \
-    $PIP_BIN install torch-scatter==2.1.2 --no-build-isolation || \
-    echo "Warning: torch-scatter installation failed, may need to be installed manually"
+    # Verify torch is actually importable
+    if ! $PYTHON_BIN -c "import torch; print(f'torch version: {torch.__version__}')" 2>/dev/null; then
+        echo "ERROR: torch is not importable even after installation"
+        exit 1
+    fi
+    # Install torch-scatter with --no-build-isolation so it can see torch in the environment
+    echo "Installing torch-scatter with --no-build-isolation (allows build to see torch)..."
+    $PIP_BIN install torch-scatter==2.1.2 --no-build-isolation || {
+        echo "ERROR: torch-scatter installation failed"
+        echo "This may require manual installation or a different approach"
+        exit 1
+    }
 fi
 
 # Verify critical packages are installed one by one with better error messages
@@ -202,12 +208,18 @@ if [ ${#MISSING[@]} -gt 0 ]; then
                     echo "torch is not installed, installing it first..."
                     $PIP_BIN install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121 || $PIP_BIN install torch==2.4.1
                 fi
-                # Try to install from PyTorch Geometric index (has pre-built wheels, avoids build issues)
-                echo "Trying to install torch-scatter from PyG index..."
-                $PIP_BIN install torch-scatter --extra-index-url https://data.pyg.org/whl/torch-2.4.0+cu121.html || \
-                $PIP_BIN install torch-scatter --extra-index-url https://data.pyg.org/whl/torch-2.4.0+cpu.html || \
-                $PIP_BIN install torch-scatter==2.1.2 --no-build-isolation || \
-                echo "Warning: torch-scatter installation failed, may need to be installed manually"
+                # Verify torch is actually importable
+                if ! $PYTHON_BIN -c "import torch; print(f'torch version: {torch.__version__}')" 2>/dev/null; then
+                    echo "ERROR: torch is not importable even after installation"
+                    exit 1
+                fi
+                # Install torch-scatter with --no-build-isolation so it can see torch in the environment
+                echo "Installing torch-scatter with --no-build-isolation (allows build to see torch)..."
+                $PIP_BIN install torch-scatter==2.1.2 --no-build-isolation || {
+                    echo "ERROR: torch-scatter installation failed"
+                    echo "This may require manual installation or a different approach"
+                    exit 1
+                }
                 ;;
         esac
     done
