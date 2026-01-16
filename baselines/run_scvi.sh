@@ -13,7 +13,21 @@ cd baselines/
 if ! command -v uv &> /dev/null; then
     echo "Installing uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.cargo/bin:$PATH"
+    # Add uv to PATH (it installs to $HOME/.local/bin)
+    export PATH="$HOME/.local/bin:$PATH"
+    # Source the env file if it exists
+    if [ -f "$HOME/.local/bin/env" ]; then
+        source "$HOME/.local/bin/env"
+    fi
+fi
+
+# Ensure uv is in PATH
+export PATH="$HOME/.local/bin:$PATH"
+
+# Verify uv is available
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is not available after installation. Please check installation."
+    exit 1
 fi
 
 # Create virtual environment with uv (installs Python if needed)
