@@ -9,25 +9,25 @@ fi
 
 cd baselines/
 
-# Create virtual environment if it doesn't exist
-if [ ! -d ".venv" ]; then
-    echo "Creating virtual environment..."
-    python -m venv .venv
+# Install uv if not available
+if ! command -v uv &> /dev/null; then
+    echo "Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.cargo/bin:$PATH"
 fi
 
-# Activate virtual environment
+# Create virtual environment with uv (installs Python if needed)
+if [ ! -d ".venv" ]; then
+    echo "Creating virtual environment with uv..."
+    uv venv --python 3.11
+fi
+
+# Activate the environment
 source .venv/bin/activate
 
-# Install/upgrade pip
-pip install --upgrade pip
-
-# Install requirements if not already installed
-if ! python -c "import torch" 2>/dev/null; then
-    echo "Installing packages from requirements.txt..."
-    pip install -r requirements.txt
-else
-    echo "Packages appear to be installed. Skipping installation."
-fi
+# Install all packages from requirements.txt using uv
+echo "Installing packages from requirements.txt with uv..."
+uv pip install -r requirements.txt
 
 # Increase file descriptor limit for large datasets (978 files in train_hvg)
 # Set to a high value to handle many open files during data loading
