@@ -40,12 +40,31 @@ fi
 source .venv/bin/activate
 
 # Upgrade pip first
+echo "Upgrading pip..."
 pip install --upgrade pip
 
 # Install all packages from requirements.txt using pip
 # (uv pip doesn't support editable Git URLs, so we use regular pip)
 echo "Installing packages from requirements.txt..."
-pip install -r requirements.txt
+if ! pip install -r requirements.txt; then
+    echo "Error: Failed to install packages from requirements.txt"
+    exit 1
+fi
+
+# Verify installation by checking for key packages
+echo "Verifying package installation..."
+if ! python -c "import hydra" 2>/dev/null; then
+    echo "Error: hydra is not installed. Installation may have failed."
+    echo "Attempting to install hydra-core directly..."
+    pip install hydra-core
+fi
+
+# Verify other critical packages
+python -c "import torch; import lightning; import wandb; print('Key packages verified')" || {
+    echo "Error: Some critical packages are missing. Please check the installation."
+    exit 1
+}
+
 
 # Increase file descriptor limit for large datasets (978 files in train_hvg)
 # Set to a high value to handle many open files during data loading
