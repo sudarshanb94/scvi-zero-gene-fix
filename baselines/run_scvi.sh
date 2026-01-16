@@ -115,6 +115,12 @@ if ! $PYTHON_BIN -c "import transformers" 2>/dev/null; then
     $PIP_BIN install transformers==4.52.4
 fi
 
+# Install torch-scatter if missing
+if ! $PYTHON_BIN -c "import torch_scatter" 2>/dev/null; then
+    echo "Installing torch-scatter..."
+    $PIP_BIN install torch-scatter==2.1.2+pt24cu121 || $PIP_BIN install torch-scatter
+fi
+
 # Verify critical packages are installed one by one with better error messages
 echo "Verifying critical packages..."
 MISSING=()
@@ -137,6 +143,10 @@ fi
 
 if ! $PYTHON_BIN -c "import transformers" 2>/dev/null; then
     MISSING+=("transformers")
+fi
+
+if ! $PYTHON_BIN -c "import torch_scatter" 2>/dev/null; then
+    MISSING+=("torch_scatter")
 fi
 
 if [ ${#MISSING[@]} -gt 0 ]; then
@@ -175,6 +185,10 @@ if [ ${#MISSING[@]} -gt 0 ]; then
                 echo "Installing transformers..."
                 $PIP_BIN install transformers==4.52.4
                 ;;
+            "torch_scatter")
+                echo "Installing torch-scatter..."
+                $PIP_BIN install torch-scatter==2.1.2+pt24cu121 || $PIP_BIN install torch-scatter
+                ;;
         esac
     done
     
@@ -202,6 +216,7 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     
     $PYTHON_BIN -c "import wandb" || { echo "ERROR: wandb import failed"; exit 1; }
     $PYTHON_BIN -c "import transformers" || { echo "ERROR: transformers import failed"; exit 1; }
+    $PYTHON_BIN -c "import torch_scatter" || { echo "ERROR: torch_scatter import failed"; exit 1; }
     echo "✓ All critical packages installed"
 else
     echo "✓ All critical packages installed"
