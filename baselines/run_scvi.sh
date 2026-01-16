@@ -49,6 +49,39 @@ echo "Installing packages from requirements.txt..."
 echo "Note: If installation fails, check the error messages above to see which package failed."
 pip install -r requirements.txt
 
+# Install critical packages if they're missing (in case requirements.txt installation failed partially)
+echo "Checking and installing critical packages..."
+
+# Install torch if missing
+if ! python -c "import torch" 2>/dev/null; then
+    echo "Installing torch..."
+    pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121 || pip install torch==2.4.1
+fi
+
+# Install hydra-core if missing
+if ! python -c "import hydra" 2>/dev/null; then
+    echo "Installing hydra-core..."
+    pip install hydra-core==1.3.2
+fi
+
+# Install pytorch-lightning if missing
+if ! python -c "import lightning" 2>/dev/null; then
+    echo "Installing pytorch-lightning..."
+    pip install pytorch-lightning==2.5.1.post0
+fi
+
+# Install wandb if missing
+if ! python -c "import wandb" 2>/dev/null; then
+    echo "Installing wandb..."
+    pip install wandb==0.20.1
+fi
+
+# Verify critical packages are installed
+echo "Verifying critical packages..."
+python -c "import torch; import hydra; import lightning; import wandb; print('✓ All critical packages installed')" || {
+    echo "Error: Some critical packages are still missing. Please install them manually."
+    exit 1
+}
 
 # Increase file descriptor limit for large datasets (978 files in train_hvg)
 # Set to a high value to handle many open files during data loading
