@@ -8,7 +8,26 @@ if [ -z "$WANDB_API_KEY" ]; then
 fi
 
 cd baselines/
+
+# Create virtual environment if it doesn't exist
+if [ ! -d ".venv" ]; then
+    echo "Creating virtual environment..."
+    python -m venv .venv
+fi
+
+# Activate virtual environment
 source .venv/bin/activate
+
+# Install/upgrade pip
+pip install --upgrade pip
+
+# Install requirements if not already installed
+if ! python -c "import torch" 2>/dev/null; then
+    echo "Installing packages from requirements.txt..."
+    pip install -r requirements.txt
+else
+    echo "Packages appear to be installed. Skipping installation."
+fi
 
 # Increase file descriptor limit for large datasets (978 files in train_hvg)
 # Set to a high value to handle many open files during data loading
