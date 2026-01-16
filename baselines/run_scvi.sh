@@ -149,6 +149,12 @@ if ! $PYTHON_BIN -c "import torch_geometric" 2>/dev/null; then
     $PIP_BIN install torch-geometric
 fi
 
+# Install dcor if missing
+if ! $PYTHON_BIN -c "import dcor" 2>/dev/null; then
+    echo "Installing dcor..."
+    $PIP_BIN install dcor
+fi
+
 # Verify critical packages are installed one by one with better error messages
 echo "Verifying critical packages..."
 MISSING=()
@@ -179,6 +185,10 @@ fi
 
 if ! $PYTHON_BIN -c "import torch_geometric" 2>/dev/null; then
     MISSING+=("torch_geometric")
+fi
+
+if ! $PYTHON_BIN -c "import dcor" 2>/dev/null; then
+    MISSING+=("dcor")
 fi
 
 if [ ${#MISSING[@]} -gt 0 ]; then
@@ -247,6 +257,10 @@ if [ ${#MISSING[@]} -gt 0 ]; then
                 # Install torch-geometric
                 $PIP_BIN install torch-geometric
                 ;;
+            "dcor")
+                echo "Installing dcor..."
+                $PIP_BIN install dcor
+                ;;
         esac
     done
     
@@ -276,6 +290,7 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     $PYTHON_BIN -c "import transformers" || { echo "ERROR: transformers import failed"; exit 1; }
     $PYTHON_BIN -c "import torch_scatter" || { echo "ERROR: torch_scatter import failed"; exit 1; }
     $PYTHON_BIN -c "import torch_geometric" || { echo "ERROR: torch_geometric import failed"; exit 1; }
+    $PYTHON_BIN -c "import dcor" || { echo "ERROR: dcor import failed"; exit 1; }
     echo "✓ All critical packages installed"
 else
     echo "✓ All critical packages installed"
