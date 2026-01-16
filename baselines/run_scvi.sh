@@ -144,7 +144,18 @@ if [ ${#MISSING[@]} -gt 0 ]; then
                 ;;
             "lightning (pytorch-lightning)")
                 echo "Installing pytorch-lightning..."
-                $PIP_BIN install --force-reinstall pytorch-lightning==2.5.1.post0
+                echo "Checking what's installed..."
+                $PIP_BIN list | grep -i lightning || echo "No lightning packages found"
+                echo "Uninstalling any existing lightning packages..."
+                $PIP_BIN uninstall -y pytorch-lightning lightning 2>/dev/null || true
+                echo "Installing pytorch-lightning==2.5.1.post0..."
+                $PIP_BIN install pytorch-lightning==2.5.1.post0
+                echo "Verifying installation..."
+                $PIP_BIN show pytorch-lightning || echo "pytorch-lightning not found after install"
+                echo "Testing import..."
+                $PYTHON_BIN -c "import lightning; print('lightning imported successfully')" || \
+                $PYTHON_BIN -c "import pytorch_lightning; print('pytorch_lightning imported successfully')" || \
+                echo "Warning: Could not import lightning or pytorch_lightning"
                 ;;
             "wandb")
                 echo "Installing wandb..."
@@ -157,7 +168,24 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     echo "Testing imports individually..."
     $PYTHON_BIN -c "import torch" || { echo "ERROR: torch import failed"; exit 1; }
     $PYTHON_BIN -c "import hydra" || { echo "ERROR: hydra import failed"; exit 1; }
-    $PYTHON_BIN -c "import lightning" || { echo "ERROR: lightning import failed"; exit 1; }
+    
+    # Test lightning import - try different variations
+    if ! $PYTHON_BIN -c "import lightning" 2>/dev/null; then
+        echo "ERROR: lightning import failed"
+        echo "Trying to diagnose the issue..."
+        echo "Installed packages with 'lightning' in name:"
+        $PIP_BIN list | grep -i lightning || echo "No lightning packages found"
+        echo "Trying alternative import:"
+        $PYTHON_BIN -c "import pytorch_lightning; print('pytorch_lightning works')" || echo "pytorch_lightning also failed"
+        echo "Reinstalling pytorch-lightning..."
+        $PIP_BIN install --force-reinstall --no-cache-dir pytorch-lightning==2.5.1.post0
+        $PYTHON_BIN -c "import lightning" || { 
+            echo "ERROR: lightning still cannot be imported after reinstall"
+            echo "Please check the pytorch-lightning installation manually"
+            exit 1
+        }
+    fi
+    
     $PYTHON_BIN -c "import wandb" || { echo "ERROR: wandb import failed"; exit 1; }
     echo "✓ All critical packages installed"
 else
