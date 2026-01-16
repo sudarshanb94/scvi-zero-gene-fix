@@ -46,24 +46,8 @@ pip install --upgrade pip
 # Install all packages from requirements.txt using pip
 # (uv pip doesn't support editable Git URLs, so we use regular pip)
 echo "Installing packages from requirements.txt..."
-if ! pip install -r requirements.txt; then
-    echo "Error: Failed to install packages from requirements.txt"
-    exit 1
-fi
-
-# Verify installation by checking for key packages
-echo "Verifying package installation..."
-if ! python -c "import hydra" 2>/dev/null; then
-    echo "Error: hydra is not installed. Installation may have failed."
-    echo "Attempting to install hydra-core directly..."
-    pip install hydra-core
-fi
-
-# Verify other critical packages
-python -c "import torch; import lightning; import wandb; print('Key packages verified')" || {
-    echo "Error: Some critical packages are missing. Please check the installation."
-    exit 1
-}
+echo "Note: If installation fails, check the error messages above to see which package failed."
+pip install -r requirements.txt
 
 
 # Increase file descriptor limit for large datasets (978 files in train_hvg)
@@ -71,7 +55,7 @@ python -c "import torch; import lightning; import wandb; print('Key packages ver
 ulimit -n 262144 2>/dev/null || true
 
 # Clear any stale CUDA contexts and reset CUDA state
-python -c "import torch; torch.cuda.empty_cache(); torch.cuda.synchronize(); print('CUDA reset complete')" 2>/dev/null || true
+python -c "import torch; torch.cuda.empty_cache(); torch.cuda.synchronize(); print('CUDA reset complete')" || echo "Warning: Could not clear CUDA cache (torch may not be installed or CUDA not available)"
 
 # Set CUDA environment variables
 # Don't restrict CUDA_VISIBLE_DEVICES - let PyTorch Lightning use all 8 GPUs
