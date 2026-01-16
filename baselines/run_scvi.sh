@@ -137,6 +137,18 @@ if ! $PYTHON_BIN -c "import torch_scatter" 2>/dev/null; then
     }
 fi
 
+# Install torch-geometric if missing
+if ! $PYTHON_BIN -c "import torch_geometric" 2>/dev/null; then
+    echo "Installing torch-geometric..."
+    # Ensure torch is installed first
+    if ! $PYTHON_BIN -c "import torch" 2>/dev/null; then
+        echo "torch is not installed, installing it first..."
+        $PIP_BIN install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121 || $PIP_BIN install torch==2.4.1
+    fi
+    # Install torch-geometric (may need torch-scatter, which we just installed)
+    $PIP_BIN install torch-geometric
+fi
+
 # Verify critical packages are installed one by one with better error messages
 echo "Verifying critical packages..."
 MISSING=()
@@ -163,6 +175,10 @@ fi
 
 if ! $PYTHON_BIN -c "import torch_scatter" 2>/dev/null; then
     MISSING+=("torch_scatter")
+fi
+
+if ! $PYTHON_BIN -c "import torch_geometric" 2>/dev/null; then
+    MISSING+=("torch_geometric")
 fi
 
 if [ ${#MISSING[@]} -gt 0 ]; then
@@ -221,6 +237,16 @@ if [ ${#MISSING[@]} -gt 0 ]; then
                     exit 1
                 }
                 ;;
+            "torch_geometric")
+                echo "Installing torch-geometric..."
+                # Ensure torch is installed first
+                if ! $PYTHON_BIN -c "import torch" 2>/dev/null; then
+                    echo "torch is not installed, installing it first..."
+                    $PIP_BIN install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121 || $PIP_BIN install torch==2.4.1
+                fi
+                # Install torch-geometric
+                $PIP_BIN install torch-geometric
+                ;;
         esac
     done
     
@@ -249,6 +275,7 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     $PYTHON_BIN -c "import wandb" || { echo "ERROR: wandb import failed"; exit 1; }
     $PYTHON_BIN -c "import transformers" || { echo "ERROR: transformers import failed"; exit 1; }
     $PYTHON_BIN -c "import torch_scatter" || { echo "ERROR: torch_scatter import failed"; exit 1; }
+    $PYTHON_BIN -c "import torch_geometric" || { echo "ERROR: torch_geometric import failed"; exit 1; }
     echo "✓ All critical packages installed"
 else
     echo "✓ All critical packages installed"
