@@ -7,7 +7,7 @@ if [ -z "$WANDB_API_KEY" ]; then
     export WANDB_API_KEY='110e40307c967c072dbb2171ac8e7328924097d8'  # Replace with your actual API key
 fi
 
-cd /work/baselines
+cd baselines/
 source .venv/bin/activate
 
 # Increase file descriptor limit for large datasets (978 files in train_hvg)
