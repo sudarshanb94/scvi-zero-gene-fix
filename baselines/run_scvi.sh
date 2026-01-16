@@ -334,6 +334,5 @@ $PYTHON_BIN -m state_sets_reproduce.train \
     output_dir='/mnt/czi-sci-ai/project-scg-llm-data-2/experiments/' \
     name='marson_scvi_vae' \
     use_wandb=true \
-    wandb=sud \
     overwrite=false
 

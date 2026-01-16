@@ -4,7 +4,7 @@ defaults:
   - data: perturbation
   - model: lr_linear
   - training: default
-  - wandb: mohsen # Change this as needed
+  - wandb: sud # Change this as needed
   - _self_
   
 
