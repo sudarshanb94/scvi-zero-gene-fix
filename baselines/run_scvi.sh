@@ -115,10 +115,16 @@ if ! $PYTHON_BIN -c "import transformers" 2>/dev/null; then
     $PIP_BIN install transformers==4.52.4
 fi
 
-# Install torch-scatter if missing
+# Install torch-scatter if missing (needs torch to be installed first)
 if ! $PYTHON_BIN -c "import torch_scatter" 2>/dev/null; then
     echo "Installing torch-scatter..."
-    $PIP_BIN install torch-scatter==2.1.2+pt24cu121 || $PIP_BIN install torch-scatter
+    # First ensure torch is installed
+    if ! $PYTHON_BIN -c "import torch" 2>/dev/null; then
+        echo "torch is not installed, installing it first..."
+        $PIP_BIN install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121 || $PIP_BIN install torch==2.4.1
+    fi
+    # Install torch-scatter (version 2.1.2 should work with torch 2.4.1)
+    $PIP_BIN install torch-scatter==2.1.2
 fi
 
 # Verify critical packages are installed one by one with better error messages
@@ -187,7 +193,13 @@ if [ ${#MISSING[@]} -gt 0 ]; then
                 ;;
             "torch_scatter")
                 echo "Installing torch-scatter..."
-                $PIP_BIN install torch-scatter==2.1.2+pt24cu121 || $PIP_BIN install torch-scatter
+                # Ensure torch is installed first
+                if ! $PYTHON_BIN -c "import torch" 2>/dev/null; then
+                    echo "torch is not installed, installing it first..."
+                    $PIP_BIN install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121 || $PIP_BIN install torch==2.4.1
+                fi
+                # Install torch-scatter (version 2.1.2 should work with torch 2.4.1)
+                $PIP_BIN install torch-scatter==2.1.2
                 ;;
         esac
     done
