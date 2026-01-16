@@ -84,6 +84,11 @@ fi
 if ! $PYTHON_BIN -c "import lightning" 2>/dev/null; then
     echo "Installing pytorch-lightning..."
     $PIP_BIN install pytorch-lightning==2.5.1.post0
+    # Verify installation
+    if ! $PYTHON_BIN -c "import lightning" 2>/dev/null; then
+        echo "Warning: pytorch-lightning installation may have failed, trying again..."
+        $PIP_BIN install --force-reinstall pytorch-lightning==2.5.1.post0
+    fi
 fi
 
 # Install wandb if missing
@@ -92,12 +97,59 @@ if ! $PYTHON_BIN -c "import wandb" 2>/dev/null; then
     $PIP_BIN install wandb==0.20.1
 fi
 
-# Verify critical packages are installed
+# Verify critical packages are installed one by one with better error messages
 echo "Verifying critical packages..."
-$PYTHON_BIN -c "import torch; import hydra; import lightning; import wandb; print('✓ All critical packages installed')" || {
-    echo "Error: Some critical packages are still missing. Please install them manually."
-    exit 1
-}
+MISSING=()
+
+if ! $PYTHON_BIN -c "import torch" 2>/dev/null; then
+    MISSING+=("torch")
+fi
+
+if ! $PYTHON_BIN -c "import hydra" 2>/dev/null; then
+    MISSING+=("hydra")
+fi
+
+if ! $PYTHON_BIN -c "import lightning" 2>/dev/null; then
+    MISSING+=("lightning (pytorch-lightning)")
+fi
+
+if ! $PYTHON_BIN -c "import wandb" 2>/dev/null; then
+    MISSING+=("wandb")
+fi
+
+if [ ${#MISSING[@]} -gt 0 ]; then
+    echo "Error: Missing packages: ${MISSING[*]}"
+    echo "Attempting to install missing packages..."
+    for pkg in "${MISSING[@]}"; do
+        case $pkg in
+            "torch")
+                echo "Installing torch..."
+                $PIP_BIN install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121 || $PIP_BIN install torch==2.4.1
+                ;;
+            "hydra")
+                echo "Installing hydra-core..."
+                $PIP_BIN install hydra-core==1.3.2
+                ;;
+            "lightning (pytorch-lightning)")
+                echo "Installing pytorch-lightning..."
+                $PIP_BIN install --force-reinstall pytorch-lightning==2.5.1.post0
+                ;;
+            "wandb")
+                echo "Installing wandb..."
+                $PIP_BIN install wandb==0.20.1
+                ;;
+        esac
+    done
+    
+    # Final verification
+    if ! $PYTHON_BIN -c "import torch; import hydra; import lightning; import wandb; print('✓ All critical packages installed')" 2>/dev/null; then
+        echo "Error: Some critical packages are still missing after installation attempts."
+        echo "Please check the error messages above and install them manually."
+        exit 1
+    fi
+else
+    echo "✓ All critical packages installed"
+fi
 
 # Increase file descriptor limit for large datasets (978 files in train_hvg)
 # Set to a high value to handle many open files during data loading
