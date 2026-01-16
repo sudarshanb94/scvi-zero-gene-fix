@@ -33,7 +33,7 @@ fi
 # Create virtual environment with uv (installs Python if needed)
 if [ ! -d ".venv" ]; then
     echo "Creating virtual environment with uv..."
-    uv venv --python 3.11
+    uv venv --python 3.11 --seed
 fi
 
 # Activate the environment
