@@ -59,11 +59,23 @@ fi
 echo "Upgrading pip..."
 $PIP_BIN install --upgrade pip
 
-# Install all packages from requirements.txt using pip
-# (uv pip doesn't support editable Git URLs, so we use regular pip)
+# Install packages from requirements.txt, but handle the editable Git install separately
 echo "Installing packages from requirements.txt..."
 echo "Note: If installation fails, check the error messages above to see which package failed."
-$PIP_BIN install -r requirements.txt
+
+# Create a temporary requirements file without the editable Git line
+grep -v "^-e git+" requirements.txt > /tmp/requirements_no_git.txt || cp requirements.txt /tmp/requirements_no_git.txt
+
+# Install packages from the filtered requirements file
+$PIP_BIN install -r /tmp/requirements_no_git.txt
+
+# Install the cell-load package from Git separately (editable install)
+echo "Installing cell-load from Git..."
+$PIP_BIN install -e git+https://github.com/Arcinstitute/cell-load.git#egg=cell-load || \
+$PIP_BIN install git+https://github.com/Arcinstitute/cell-load.git
+
+# Clean up temp file
+rm -f /tmp/requirements_no_git.txt
 
 # Install critical packages if they're missing (in case requirements.txt installation failed partially)
 echo "Checking and installing critical packages..."
