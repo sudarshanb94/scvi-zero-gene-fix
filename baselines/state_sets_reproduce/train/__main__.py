@@ -455,6 +455,13 @@ def train(cfg: DictConfig) -> None:
         dm_var_dims,
     )
 
+    # Clear CUDA cache after data module setup (larger datasets may create contexts)
+    # This prevents CUDA "busy" errors when trainer initializes
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        logger.info("CUDA cache cleared after data module setup")
+
     # Set up logging
     loggers = get_loggers(
         output_dir=cfg["output_dir"],
@@ -473,6 +480,10 @@ def train(cfg: DictConfig) -> None:
             wandb_info_path = os.path.join(run_output_dir, "wandb_path.txt")
             with open(wandb_info_path, "w") as f:
                 f.write(lg.experiment.path)
+            # Clear CUDA cache after wandb initialization (wandb may create CUDA contexts)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
             break
 
     # Set up callbacks
@@ -506,7 +517,6 @@ def train(cfg: DictConfig) -> None:
     # Decide on trainer params
     trainer_kwargs = dict(
         accelerator=accelerator,
-        devices=1,
         max_steps=cfg["training"].get("max_steps", -1),  # for normal models
         max_epochs=cfg["training"].get("max_epochs", -1),
         check_val_every_n_epoch=None,
@@ -516,6 +526,34 @@ def train(cfg: DictConfig) -> None:
         callbacks=callbacks,
         gradient_clip_val=cfg["training"].get("gradient_clip_val", None),
     )
+    
+    # Multi-GPU support: only process if devices is explicitly in config
+    # This preserves original behavior when devices is not specified (defaults to 1)
+    if "devices" in cfg["training"]:
+        num_devices = cfg["training"]["devices"]
+        # Ensure devices is an integer if it's a numeric string
+        if isinstance(num_devices, str) and num_devices.isdigit():
+            num_devices = int(num_devices)
+        
+        # Only set devices if it's different from default (1) or if it's "auto"
+        # When devices=1, don't set it explicitly to avoid CUDA initialization issues
+        if num_devices != 1:
+            trainer_kwargs["devices"] = num_devices
+        
+        # Get strategy from config
+        strategy = cfg["training"].get("strategy", None)
+        
+        # If using multiple devices, set strategy to "ddp" if not specified
+        if num_devices != 1 and num_devices != "auto" and strategy is None:
+            if isinstance(num_devices, int) and num_devices > 1:
+                strategy = "ddp"
+            elif num_devices == "auto":
+                # Let PyTorch Lightning auto-detect
+                strategy = "auto"
+        
+        # Add strategy if specified
+        if strategy is not None:
+            trainer_kwargs["strategy"] = strategy
 
     if cfg["model"]["name"].lower() == "cpa":
         trainer_kwargs["gradient_clip_val"] = 0

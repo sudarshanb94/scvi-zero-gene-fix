@@ -4,6 +4,11 @@ val_freq: 5000
 test_freq: 9000
 gradient_clip_val: 10 # 0 means no clipping
 
+# Multi-GPU training options (optional):
+# devices: 1  # Number of GPUs to use (int), "auto" to use all available, or list of GPU indices [0,1,2,3]
+# strategy: null  # Distributed strategy: "ddp", "ddp_spawn", "deepspeed", "fsdp", or null (auto-detect)
+#   If devices > 1 and strategy is null, defaults to "ddp"
+
 n_epochs_kl_warmup: 1e4
 lr: 5e-4
 wd: 4e-7

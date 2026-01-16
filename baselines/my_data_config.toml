@@ -3,9 +3,9 @@
 
 [datasets]
 # Training dataset - contains sharded h5ad files
-train_data = "/mnt/data/Marson/ML_splits/donor_timepoint_single_guide_fewshot_allG_sharded/mini_train_hvg"
+train_data = "/mnt/data/Marson/ML_splits/donor_timepoint_single_guide_fewshot_allG_sharded/train_hvg"
 # Validation dataset - contains sharded h5ad files  
-valid_data = "/mnt/data/Marson/ML_splits/donor_timepoint_single_guide_fewshot_allG_sharded/mini_valid_hvg"
+valid_data = "/mnt/data/Marson/ML_splits/donor_timepoint_single_guide_fewshot_allG_sharded/valid_hvg"
 
 [training]
 # Use train_data for training
