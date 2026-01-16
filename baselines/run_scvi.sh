@@ -141,12 +141,13 @@ if [ ${#MISSING[@]} -gt 0 ]; then
         esac
     done
     
-    # Final verification
-    if ! $PYTHON_BIN -c "import torch; import hydra; import lightning; import wandb; print('✓ All critical packages installed')" 2>/dev/null; then
-        echo "Error: Some critical packages are still missing after installation attempts."
-        echo "Please check the error messages above and install them manually."
-        exit 1
-    fi
+    # Final verification - test each import individually to show which one fails
+    echo "Testing imports individually..."
+    $PYTHON_BIN -c "import torch" || { echo "ERROR: torch import failed"; exit 1; }
+    $PYTHON_BIN -c "import hydra" || { echo "ERROR: hydra import failed"; exit 1; }
+    $PYTHON_BIN -c "import lightning" || { echo "ERROR: lightning import failed"; exit 1; }
+    $PYTHON_BIN -c "import wandb" || { echo "ERROR: wandb import failed"; exit 1; }
+    echo "✓ All critical packages installed"
 else
     echo "✓ All critical packages installed"
 fi
