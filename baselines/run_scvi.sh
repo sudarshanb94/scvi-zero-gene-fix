@@ -10,11 +10,12 @@ fi
 # Change to baselines directory
 cd /work/baselines
 
-# Use persistent venv Python explicitly (needed when running with sudo)
+# Activate persistent venv
 # This venv is shared across cluster jobs and located in persistent storage
-PYTHON_CMD="/mnt/czi-sci-ai/project-scg-llm-data-2/venv/bin/python"
-if [ ! -f "$PYTHON_CMD" ]; then
-    echo "Error: Python not found at $PYTHON_CMD"
+source /mnt/sudarshan/venv/bin/activate
+
+if ! command -v python &> /dev/null; then
+    echo "Error: Python not found after activating venv"
     echo "Please ensure the persistent virtual environment is set up."
     echo "Run: bash /work/baselines/install_venv.sh"
     exit 1
@@ -25,7 +26,7 @@ fi
 ulimit -n 262144 2>/dev/null || true
 
 # Clear any stale CUDA contexts and reset CUDA state
-$PYTHON_CMD -c "import torch; torch.cuda.empty_cache(); torch.cuda.synchronize(); print('CUDA reset complete')" 2>/dev/null || true
+python -c "import torch; torch.cuda.empty_cache(); torch.cuda.synchronize(); print('CUDA reset complete')" 2>/dev/null || true
 
 # Set CUDA environment variables
 # Don't restrict CUDA_VISIBLE_DEVICES - let PyTorch Lightning use all 8 GPUs
@@ -40,7 +41,7 @@ export WANDB_DIR=/work/baselines/wandb_logs
 mkdir -p /work/baselines/wandb_logs
 
 # Run scVI training
-$PYTHON_CMD -m state_sets_reproduce.train \
+python -m state_sets_reproduce.train \
     data.kwargs.toml_config_path=/work/baselines/my_data_config.toml \
     data.kwargs.embed_key=null \
     data.kwargs.basal_mapping_strategy=random \
