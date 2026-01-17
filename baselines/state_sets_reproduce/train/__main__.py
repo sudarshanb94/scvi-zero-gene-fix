@@ -19,7 +19,7 @@ from lightning.pytorch.plugins.precision import MixedPrecision
 
 from cell_load.utils.modules import get_datamodule
 
-sys.path.append("/home/mohsen/projects/state-sets-reproduce/src/")
+
 
 from state_sets_reproduce.models import (
     scGPTForPerturbationModel,
@@ -228,7 +228,9 @@ def get_loggers(
             tags=cfg["wandb"].get("tags", []) if cfg else [],
         )
         if cfg is not None:
-            wandb_logger.experiment.config.update(cfg)
+            # Convert OmegaConf DictConfig to dict if needed, then log hyperparameters
+            cfg_dict = OmegaConf.to_container(cfg, resolve=True) if isinstance(cfg, DictConfig) else cfg
+            wandb_logger.log_hyperparams(cfg_dict)
         loggers.append(wandb_logger)
 
     return loggers
@@ -486,7 +488,10 @@ def train(cfg: DictConfig) -> None:
         if isinstance(lg, WandbLogger):
             wandb_info_path = os.path.join(run_output_dir, "wandb_path.txt")
             with open(wandb_info_path, "w") as f:
-                f.write(lg.experiment.path)
+                # Construct path from entity, project, and run id
+                experiment = lg.experiment
+                wandb_path = f"{experiment.entity}/{experiment.project}/{experiment.id}"
+                f.write(wandb_path)
             # Clear CUDA cache after wandb initialization (wandb may create CUDA contexts)
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -534,6 +539,10 @@ def train(cfg: DictConfig) -> None:
         gradient_clip_val=cfg["training"].get("gradient_clip_val", None),
     )
     
+    # Initialize DataParallel flag (used later in training loop)
+    use_dp_training = False
+    dp_num_devices = 1
+    
     # Multi-GPU support: only process if devices is explicitly in config
     # This preserves original behavior when devices is not specified (defaults to 1)
     if "devices" in cfg["training"]:
@@ -542,30 +551,34 @@ def train(cfg: DictConfig) -> None:
         if isinstance(num_devices, str) and num_devices.isdigit():
             num_devices = int(num_devices)
         
-        # Only set devices if it's different from default (1) or if it's "auto"
-        # When devices=1, don't set it explicitly to avoid CUDA initialization issues
-        if num_devices != 1:
-            trainer_kwargs["devices"] = num_devices
-        
         # Get strategy from config
         strategy = cfg["training"].get("strategy", None)
         
-        # If using multiple devices, set strategy to "ddp" if not specified
+        # If no strategy specified and multiple devices, use DataParallel (single process)
+        # This avoids DDP's memory issues with large datasets
+        dp_num_devices = num_devices
         if num_devices != 1 and num_devices != "auto" and strategy is None:
             if isinstance(num_devices, int) and num_devices > 1:
-                strategy = "ddp"
+                use_dp_training = True
+                logger.info(f"Using DataParallel with {num_devices} GPUs (single process mode)")
+                # Don't set devices/strategy in trainer - we'll handle it manually
             elif num_devices == "auto":
                 # Let PyTorch Lightning auto-detect
                 strategy = "auto"
         
-        # Add strategy if specified
-        if strategy is not None:
-            # For DDP strategies, set find_unused_parameters=True to handle unused parameters
-            if strategy in ["ddp", "ddp_spawn"]:
-                from lightning.pytorch.strategies import DDPStrategy
-                trainer_kwargs["strategy"] = DDPStrategy(find_unused_parameters=True)
-            else:
-                trainer_kwargs["strategy"] = strategy
+        # Only set devices/strategy if not using DP
+        if not use_dp_training:
+            if num_devices != 1:
+                trainer_kwargs["devices"] = num_devices
+            
+            # Add strategy if specified
+            if strategy is not None:
+                # For DDP strategies, set find_unused_parameters=True to handle unused parameters
+                if strategy in ["ddp", "ddp_spawn"]:
+                    from lightning.pytorch.strategies import DDPStrategy
+                    trainer_kwargs["strategy"] = DDPStrategy(find_unused_parameters=True)
+                else:
+                    trainer_kwargs["strategy"] = strategy
 
     if cfg["model"]["name"].lower() == "cpa":
         trainer_kwargs["gradient_clip_val"] = 0
@@ -579,24 +592,188 @@ def train(cfg: DictConfig) -> None:
         # delete max_steps to avoid conflicts
         del trainer_kwargs["max_steps"]
 
-    # Build trainer
-    trainer = pl.Trainer(**trainer_kwargs)
-
-    # Load checkpoint if exists
-    checkpoint_path = join(ckpt_callbacks[0].dirpath, "last.ckpt")
-    if not exists(checkpoint_path):
-        checkpoint_path = None
+    # Check if we should use DataParallel training loop
+    if use_dp_training:
+        # Custom DataParallel training loop (single process, avoids DDP memory issues)
+        from torch.utils.data import DataLoader
+        
+        # Create minimal trainer for logging/callbacks
+        minimal_trainer = pl.Trainer(
+            accelerator=trainer_kwargs.get("accelerator", "gpu"),
+            devices=1,  # Single device, we'll use DataParallel manually
+            logger=loggers,
+            callbacks=callbacks,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+        )
+        model.trainer = minimal_trainer
+        
+        # Wrap model in DataParallel
+        model = model.cuda()
+        model = torch.nn.DataParallel(model, device_ids=list(range(dp_num_devices)))
+        
+        # Setup datamodule
+        dm.setup("fit")
+        train_loader = dm.train_dataloader()
+        
+        # Setup optimizer
+        opt_config = model.module.configure_optimizers()
+        if isinstance(opt_config, tuple):
+            optimizers, schedulers = opt_config
+            optimizer = optimizers[0] if isinstance(optimizers, list) else optimizers
+            scheduler = schedulers[0] if isinstance(schedulers, list) else schedulers
+        else:
+            optimizer = opt_config[0] if isinstance(opt_config, list) else opt_config
+            scheduler = None
+        
+        # Training loop
+        max_steps = cfg["training"].get("max_steps", -1)
+        max_epochs = cfg["training"].get("max_epochs", -1)
+        current_step = 0
+        current_epoch = 0
+        
+        model.train()
+        logger.info(f"Starting DataParallel training: max_steps={max_steps}, max_epochs={max_epochs}")
+        
+        while (max_steps < 0 or current_step < max_steps) and (max_epochs < 0 or current_epoch < max_epochs):
+            epoch_losses = []
+            for batch_idx, batch in enumerate(train_loader):
+                # Move batch to GPU
+                batch = {k: v.cuda() if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+                
+                # Extract batch tensors and compute loss directly
+                x_pert, x_basal, pert, cell_type, batch_ids = model.module.extract_batch_tensors(batch)
+                encoder_outputs, decoder_outputs = model.module.module.forward(x_basal, pert, cell_type, batch_ids)
+                
+                # Convert to pseudo-counts if log-normalized
+                if x_pert.max() <= 25.0:
+                    x_pert = torch.exp(x_pert) - 1
+                    x_basal = torch.exp(x_basal) - 1
+                
+                # Compute loss
+                recon_loss, kl_loss = model.module.module.loss(
+                    x_pert=x_pert,
+                    encoder_outputs=encoder_outputs,
+                    decoder_outputs=decoder_outputs,
+                )
+                
+                # Compute KL weight manually (matching model's kl_weight property exactly)
+                # The model uses slope=1.0, so kl_weight = 1.0 * proportion during warmup, or 1.0 after
+                slope = 1.0
+                n_steps_kl_warmup = model.module.n_steps_kl_warmup
+                n_epochs_kl_warmup = model.module.n_epochs_kl_warmup
+                
+                if n_steps_kl_warmup is not None:
+                    if current_step <= n_steps_kl_warmup:
+                        proportion = current_step / n_steps_kl_warmup
+                        kl_weight = slope * proportion
+                    else:
+                        kl_weight = slope
+                elif n_epochs_kl_warmup is not None:
+                    if current_epoch <= n_epochs_kl_warmup:
+                        proportion = current_epoch / n_epochs_kl_warmup
+                        kl_weight = slope * proportion
+                    else:
+                        kl_weight = slope
+                else:
+                    kl_weight = slope
+                
+                loss = recon_loss + kl_weight * kl_loss
+                
+                # Backward pass
+                optimizer.zero_grad()
+                loss.backward()
+                
+                # Gradient clipping
+                if cfg["training"].get("gradient_clip_val") is not None:
+                    torch.nn.utils.clip_grad_norm_(
+                        model.module.parameters(), 
+                        cfg["training"]["gradient_clip_val"]
+                    )
+                
+                optimizer.step()
+                
+                current_step += 1
+                epoch_losses.append(loss.item())
+                
+                # Logging
+                if current_step % 100 == 0:
+                    avg_loss = sum(epoch_losses[-100:]) / min(100, len(epoch_losses))
+                    logger.info(f"Step {current_step}, Loss: {avg_loss:.4f}")
+                
+                # Step scheduler
+                if scheduler is not None and current_step % (cfg["training"].get("step_size_lr", 45) * 1000) == 0:
+                    scheduler.step()
+                
+                if max_steps > 0 and current_step >= max_steps:
+                    break
+            
+            current_epoch += 1
+            avg_epoch_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
+            logger.info(f"Epoch {current_epoch} completed, Avg Loss: {avg_epoch_loss:.4f}, Steps: {current_step}")
+            
+            # Save checkpoint after each epoch
+            epoch_ckpt_path = join(ckpt_callbacks[0].dirpath, f"epoch_{current_epoch}.ckpt")
+            torch.save({
+                'model_state_dict': model.module.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+                'epoch': current_epoch,
+                'step': current_step,
+            }, epoch_ckpt_path)
+            logger.info(f"Saved epoch checkpoint to {epoch_ckpt_path}")
+            
+            # Also save/update last.ckpt for resuming
+            last_ckpt_path = join(ckpt_callbacks[0].dirpath, "last.ckpt")
+            torch.save({
+                'model_state_dict': model.module.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+                'epoch': current_epoch,
+                'step': current_step,
+            }, last_ckpt_path)
+            
+            if max_epochs > 0 and current_epoch >= max_epochs:
+                break
+        
+        logger.info("DataParallel training completed.")
+        
+        # Save final checkpoint
+        checkpoint_path = join(ckpt_callbacks[0].dirpath, "final.ckpt")
+        torch.save({
+            'model_state_dict': model.module.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+            'epoch': current_epoch,
+            'step': current_step,
+        }, checkpoint_path)
+        logger.info(f"Saved final checkpoint to {checkpoint_path}")
+        
     else:
-        logging.info(f"!! Resuming training from {checkpoint_path} !!")
+        # Standard Lightning training
+        # Build trainer
+        trainer = pl.Trainer(**trainer_kwargs)
 
-    logger.info("Starting trainer fit.")
+        # Load checkpoint if exists
+        checkpoint_path = join(ckpt_callbacks[0].dirpath, "last.ckpt")
+        if not exists(checkpoint_path):
+            checkpoint_path = None
+        else:
+            logging.info(f"!! Resuming training from {checkpoint_path} !!")
 
-    # Train
-    trainer.fit(
-        model,
-        datamodule=dm,
-        ckpt_path=checkpoint_path,
-    )
+        logger.info("Starting trainer fit.")
+
+        # Train
+        trainer.fit(
+            model,
+            datamodule=dm,
+            ckpt_path=checkpoint_path,
+        )
+
+        # at this point if checkpoint_path does not exist, manually create one
+        checkpoint_path = join(ckpt_callbacks[0].dirpath, "final.ckpt")
+        if not exists(checkpoint_path):
+            trainer.save_checkpoint(checkpoint_path)
 
     # at this point if checkpoint_path does not exist, manually create one
     checkpoint_path = join(ckpt_callbacks[0].dirpath, "final.ckpt")
