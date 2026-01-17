@@ -10,13 +10,17 @@ fi
 # Change to baselines directory
 cd /work/baselines
 
-# Activate persistent venv
-# This venv is shared across cluster jobs and located in persistent storage
-source /mnt/sudarshan/venv/bin/activate
+# Activate local venv in current directory
+if [ ! -d ".venv" ]; then
+    echo "Virtual environment not found. Creating one..."
+    bash install_venv.sh
+fi
+
+source .venv/bin/activate
 
 if ! command -v python &> /dev/null; then
     echo "Error: Python not found after activating venv"
-    echo "Please ensure the persistent virtual environment is set up."
+    echo "Please ensure the virtual environment is set up."
     echo "Run: bash /work/baselines/install_venv.sh"
     exit 1
 fi
