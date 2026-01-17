@@ -7,15 +7,25 @@ if [ -z "$WANDB_API_KEY" ]; then
     export WANDB_API_KEY='110e40307c967c072dbb2171ac8e7328924097d8'  # Replace with your actual API key
 fi
 
+# Change to baselines directory
 cd /work/baselines
-source .venv/bin/activate
+
+# Use persistent venv Python explicitly (needed when running with sudo)
+# This venv is shared across cluster jobs and located in persistent storage
+PYTHON_CMD="/mnt/czi-sci-ai/project-scg-llm-data-2/venv/bin/python"
+if [ ! -f "$PYTHON_CMD" ]; then
+    echo "Error: Python not found at $PYTHON_CMD"
+    echo "Please ensure the persistent virtual environment is set up."
+    echo "Run: bash /work/baselines/install_venv.sh"
+    exit 1
+fi
 
 # Increase file descriptor limit for large datasets (978 files in train_hvg)
 # Set to a high value to handle many open files during data loading
 ulimit -n 262144 2>/dev/null || true
 
 # Clear any stale CUDA contexts and reset CUDA state
-python -c "import torch; torch.cuda.empty_cache(); torch.cuda.synchronize(); print('CUDA reset complete')" 2>/dev/null || true
+$PYTHON_CMD -c "import torch; torch.cuda.empty_cache(); torch.cuda.synchronize(); print('CUDA reset complete')" 2>/dev/null || true
 
 # Set CUDA environment variables
 # Don't restrict CUDA_VISIBLE_DEVICES - let PyTorch Lightning use all 8 GPUs
@@ -25,8 +35,12 @@ python -c "import torch; torch.cuda.empty_cache(); torch.cuda.synchronize(); pri
 # If you hit file handle issues, you can set: export WANDB_MODE=offline
 # export WANDB_MODE=offline
 
+# Set wandb directory to a writable location
+export WANDB_DIR=/work/baselines/wandb_logs
+mkdir -p /work/baselines/wandb_logs
+
 # Run scVI training
-python -m state_sets_reproduce.train \
+$PYTHON_CMD -m state_sets_reproduce.train \
     data.kwargs.toml_config_path=/work/baselines/my_data_config.toml \
     data.kwargs.embed_key=null \
     data.kwargs.basal_mapping_strategy=random \
@@ -38,14 +52,14 @@ python -m state_sets_reproduce.train \
     data.kwargs.control_pert=NTC \
     training.max_steps=3906200 \
     training.n_epochs_kl_warmup=200 \
-    +training.devices=8 \
-    +training.strategy=ddp_spawn \
+    +training.devices=1 \
     training.val_freq=97656 \
     training.test_freq=97656 \
     training.batch_size=128 \
     model=scvi \
     training=scvi \
     output_dir='/mnt/czi-sci-ai/project-scg-llm-data-2/experiments/' \
+    config_dir='/work/baselines/configs' \
     name='marson_scvi_vae' \
     use_wandb=true \
     wandb.entity=sud \

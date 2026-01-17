@@ -4,13 +4,14 @@ defaults:
   - data: perturbation
   - model: lr_linear
   - training: default
-  - wandb: mohsen # Change this as needed
+  - wandb: sud # Change this as needed
   - _self_
   
 
 # output_dir must be an absolute path (so that launch scripts are fully descriptive)
 name: debug
 output_dir: ./debugging
+config_dir: null  # If null, config.yaml will be saved to output_dir/name. Otherwise, specify absolute path.
 use_wandb: true
 overwrite: false
 return_adatas: false

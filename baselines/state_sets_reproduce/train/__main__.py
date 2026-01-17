@@ -421,7 +421,14 @@ def train(cfg: DictConfig) -> None:
         else:
             raise ValueError(f"Unknown gene embedding: {cfg['model']['gene_emb']}")
 
-    with open(join(run_output_dir, "config.yaml"), "w") as f:
+    # Save config.yaml to config_dir if specified, otherwise to run_output_dir
+    if cfg.get("config_dir") is not None:
+        config_path = join(cfg["config_dir"], f"{cfg['name']}_config.yaml")
+        os.makedirs(cfg["config_dir"], exist_ok=True)
+    else:
+        config_path = join(run_output_dir, "config.yaml")
+    
+    with open(config_path, "w") as f:
         # f.write()
         new_cfg_yaml = OmegaConf.to_yaml(cfg, resolve=True)
         f.write(new_cfg_yaml)
