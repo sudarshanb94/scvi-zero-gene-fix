@@ -18,6 +18,12 @@ fi
 
 source .venv/bin/activate
 
+# Ensure cell-load is imported from local directory (patched version)
+# This takes precedence over any installed version in site-packages
+if [ -d "cell-load/src" ]; then
+    export PYTHONPATH="$(pwd)/cell-load/src:${PYTHONPATH}"
+fi
+
 if ! command -v python &> /dev/null; then
     echo "Error: Python not found after activating venv"
     echo "Please ensure the virtual environment is set up."
