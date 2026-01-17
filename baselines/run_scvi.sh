@@ -60,7 +60,7 @@ python -m state_sets_reproduce.train \
     data.kwargs.embed_key=null \
     data.kwargs.basal_mapping_strategy=random \
     data.kwargs.output_space=gene \
-    data.kwargs.num_workers=2 \
+    data.kwargs.num_workers=0 \
     data.kwargs.batch_col=donor_id \
     data.kwargs.pert_col=guide_target_gene_symbol \
     data.kwargs.cell_type_key=experimental_perturbation_time_point \
