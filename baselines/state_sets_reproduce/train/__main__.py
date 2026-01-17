@@ -560,7 +560,12 @@ def train(cfg: DictConfig) -> None:
         
         # Add strategy if specified
         if strategy is not None:
-            trainer_kwargs["strategy"] = strategy
+            # For DDP strategies, set find_unused_parameters=True to handle unused parameters
+            if strategy in ["ddp", "ddp_spawn"]:
+                from lightning.pytorch.strategies import DDPStrategy
+                trainer_kwargs["strategy"] = DDPStrategy(find_unused_parameters=True)
+            else:
+                trainer_kwargs["strategy"] = strategy
 
     if cfg["model"]["name"].lower() == "cpa":
         trainer_kwargs["gradient_clip_val"] = 0
