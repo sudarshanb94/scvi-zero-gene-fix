@@ -42,9 +42,17 @@ class PerturbationBatchSampler(Sampler):
         start_time = time.time()
 
         # If the provided dataset has a `.data_source` attribute, use that.
-        self.dataset = (
-            dataset.data_source if hasattr(dataset, "data_source") else dataset
-        )
+        # Also handle DistributedSampler wrapping from PyTorch Lightning
+        if hasattr(dataset, "data_source"):
+            self.dataset = dataset.data_source
+        elif hasattr(dataset, "dataset"):
+            # Handle DistributedSampler or other wrappers that have a .dataset attribute
+            self.dataset = dataset.dataset
+            # If it's still wrapped, unwrap further
+            while hasattr(self.dataset, "dataset") and not hasattr(self.dataset, "datasets"):
+                self.dataset = self.dataset.dataset
+        else:
+            self.dataset = dataset
         self.batch_size = batch_size
         self.test = test
         self.use_batch = use_batch
@@ -74,6 +82,13 @@ class PerturbationBatchSampler(Sampler):
             )
 
         # Create caches for all unique H5 files.
+        # Ensure we have a MetadataConcatDataset with a .datasets attribute
+        if not hasattr(self.dataset, "datasets"):
+            raise ValueError(
+                f"Expected dataset to be a MetadataConcatDataset with 'datasets' attribute, "
+                f"but got {type(self.dataset)}. This may indicate the dataset was wrapped "
+                f"incorrectly by PyTorch Lightning."
+            )
         self.metadata_caches = {}
         for subset in self.dataset.datasets:
             base_dataset: PerturbationDataset = subset.dataset

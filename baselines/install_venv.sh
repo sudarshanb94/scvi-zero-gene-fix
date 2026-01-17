@@ -61,13 +61,14 @@ $PIP_CMD install --upgrade pip
 # Install packages from requirements.txt
 echo "Installing packages from requirements.txt..."
 
-# Handle the editable Git install separately (cell-load)
-# Also handle torch-scatter and flash-attn separately (needs torch installed first)
-# Create a temporary requirements file without the editable Git line, torch-scatter, and flash-attn
-TEMP_REQ="/tmp/requirements_no_git_$$.txt"
+# Handle torch-scatter and flash-attn separately (needs torch installed first)
+# Also exclude cell-load from requirements.txt since we install it from local directory
+# Create a temporary requirements file without torch-scatter, flash-attn, and cell-load
+TEMP_REQ="/tmp/requirements_no_special_$$.txt"
 grep -v "^-e git+" requirements.txt | \
     grep -v "^torch-scatter" | \
-    grep -v "^flash-attn" > "$TEMP_REQ" || cp requirements.txt "$TEMP_REQ"
+    grep -v "^flash-attn" | \
+    grep -v "cell-load" > "$TEMP_REQ" || cp requirements.txt "$TEMP_REQ"
 
 # Install packages from the filtered requirements file (this will install torch)
 echo "Installing standard packages (including torch)..."
@@ -82,31 +83,17 @@ if ! $PYTHON_BIN -c "import torch" 2>/dev/null; then
 fi
 $PIP_CMD install torch-scatter==2.1.2 --no-build-isolation
 
-# Install cell-load from Git separately (editable install)
-echo "Installing cell-load from Git..."
-$PIP_CMD install -e git+https://github.com/Arcinstitute/cell-load.git#egg=cell-load || \
-$PIP_CMD install git+https://github.com/Arcinstitute/cell-load.git
-
-# Apply patch to cell-load to add var/gene_ids fallback
-echo "Applying patch to cell-load for var/gene_ids fallback..."
-CELL_LOAD_FILE="$VENV_PATH/src/cell-load/src/cell_load/dataset/_perturbation.py"
-if [ -f "$CELL_LOAD_FILE" ]; then
-    # Check if patch is already applied
-    if ! grep -q "var/gene_ids" "$CELL_LOAD_FILE"; then
-        # If we have a working version in the existing .venv, copy it
-        WORKING_FILE="/work/baselines/.venv/lib/python3.12/site-packages/cell_load/dataset/_perturbation.py"
-        if [ -f "$WORKING_FILE" ]; then
-            echo "Copying patched file from existing venv..."
-            cp "$WORKING_FILE" "$CELL_LOAD_FILE"
-            echo "✓ Patch applied to cell-load (copied from working version)"
-        else
-            echo "Warning: No working version found. Please manually apply the patch to add var/gene_ids fallback."
-        fi
-    else
-        echo "✓ Patch already applied to cell-load"
-    fi
+# Install cell-load from local directory (editable install)
+# The local cell-load directory should have the var/gene_ids fallback patch already applied
+CELL_LOAD_DIR="$(dirname "$0")/cell-load"
+if [ -d "$CELL_LOAD_DIR" ]; then
+    echo "Installing cell-load from local directory: $CELL_LOAD_DIR"
+    $PIP_CMD install -e "$CELL_LOAD_DIR"
 else
-    echo "Warning: cell-load source file not found at $CELL_LOAD_FILE, skipping patch"
+    echo "ERROR: cell-load directory not found at $CELL_LOAD_DIR"
+    echo "Please ensure the cell-load directory exists in the baselines directory."
+    echo "It should be cloned from: https://github.com/Arcinstitute/cell-load.git"
+    exit 1
 fi
 
 # Clean up temp file
