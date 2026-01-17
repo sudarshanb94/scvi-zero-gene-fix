@@ -37,6 +37,10 @@ fi
 # Activate the environment
 source "$VENV_PATH/bin/activate"
 
+# Set pip cache directory to a writable location to avoid permission warnings
+export PIP_CACHE_DIR="$(dirname "$0")/.pip_cache"
+mkdir -p "$PIP_CACHE_DIR"
+
 # Set Python path
 PYTHON_BIN="$VENV_PATH/bin/python"
 

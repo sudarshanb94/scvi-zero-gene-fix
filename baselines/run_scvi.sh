@@ -18,6 +18,10 @@ fi
 
 source .venv/bin/activate
 
+# Set pip cache directory to a writable location to avoid permission warnings
+export PIP_CACHE_DIR="$(pwd)/.pip_cache"
+mkdir -p "$PIP_CACHE_DIR"
+
 # Ensure cell-load is imported from local directory (patched version)
 # This takes precedence over any installed version in site-packages
 if [ -d "cell-load/src" ]; then
@@ -56,7 +60,7 @@ python -m state_sets_reproduce.train \
     data.kwargs.embed_key=null \
     data.kwargs.basal_mapping_strategy=random \
     data.kwargs.output_space=gene \
-    data.kwargs.num_workers=8 \
+    data.kwargs.num_workers=2 \
     data.kwargs.batch_col=donor_id \
     data.kwargs.pert_col=guide_target_gene_symbol \
     data.kwargs.cell_type_key=experimental_perturbation_time_point \
