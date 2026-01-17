@@ -52,7 +52,8 @@ $PYTHON_CMD -m state_sets_reproduce.train \
     data.kwargs.control_pert=NTC \
     training.max_steps=3906200 \
     training.n_epochs_kl_warmup=200 \
-    +training.devices=1 \
+    +training.devices=8 \
+    +training.strategy=ddp_spawn \
     training.val_freq=97656 \
     training.test_freq=97656 \
     training.batch_size=128 \
