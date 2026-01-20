@@ -70,7 +70,7 @@ python -m state_sets_reproduce.train \
     +training.devices=4 \
     training.val_freq=97656 \
     training.test_freq=97656 \
-    training.batch_size=128 \
+    training.batch_size=768 \
     model=scvi \
     training=scvi \
     output_dir='/mnt/czi-sci-ai/project-scg-llm-data-2/experiments/' \

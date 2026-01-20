@@ -20,7 +20,7 @@ data:
     store_raw_basal: false
     int_counts: false
     barcode: true
-    batch_size: 128
+    batch_size: 768
     cell_sentence_len: 1
   output_dir: null
   debug: true
@@ -61,7 +61,7 @@ training:
   wd: 4.0e-07
   step_size_lr: 25
   do_clip_grad: false
-  batch_size: 128
+  batch_size: 768
   devices: 4
 wandb:
   project: state-sets-reproduce

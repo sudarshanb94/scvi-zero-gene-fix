@@ -610,11 +610,23 @@ def train(cfg: DictConfig) -> None:
         
         # Wrap model in DataParallel
         model = model.cuda()
-        model = torch.nn.DataParallel(model, device_ids=list(range(dp_num_devices)))
+        device_ids = list(range(dp_num_devices))
+        model = torch.nn.DataParallel(model, device_ids=device_ids)
+        
+        # Verify GPU usage
+        logger.info(f"DataParallel configured with {dp_num_devices} GPUs: {device_ids}")
+        logger.info(f"Batch size: {cfg['training']['batch_size']} (total across all GPUs)")
+        logger.info(f"Effective batch size per GPU: {cfg['training']['batch_size'] // dp_num_devices}")
+        if torch.cuda.is_available():
+            for i in range(dp_num_devices):
+                logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
         
         # Setup datamodule
+        logger.info("Setting up datamodule...")
         dm.setup("fit")
+        logger.info("Creating train dataloader...")
         train_loader = dm.train_dataloader()
+        logger.info(f"Train dataloader created. Starting iteration...")
         
         # Setup optimizer
         opt_config = model.module.configure_optimizers()
@@ -634,23 +646,41 @@ def train(cfg: DictConfig) -> None:
         
         model.train()
         logger.info(f"Starting DataParallel training: max_steps={max_steps}, max_epochs={max_epochs}")
+        logger.info(f"Train loader created, starting epoch loop...")
         
         while (max_steps < 0 or current_step < max_steps) and (max_epochs < 0 or current_epoch < max_epochs):
             epoch_losses = []
+            logger.info(f"Starting epoch {current_epoch + 1}...")
             for batch_idx, batch in enumerate(train_loader):
+                if batch_idx == 0:
+                    logger.info(f"Processing first batch (batch_idx={batch_idx})...")
+                elif batch_idx % 100 == 0:
+                    logger.info(f"Processing batch {batch_idx}...")
+                
                 # Move batch to GPU
+                if batch_idx == 0:
+                    logger.info("Moving batch to GPU...")
                 batch = {k: v.cuda() if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
                 
                 # Extract batch tensors and compute loss directly
+                if batch_idx == 0:
+                    logger.info("Extracting batch tensors...")
                 x_pert, x_basal, pert, cell_type, batch_ids = model.module.extract_batch_tensors(batch)
+                
+                if batch_idx == 0:
+                    logger.info("Running forward pass...")
                 encoder_outputs, decoder_outputs = model.module.module.forward(x_basal, pert, cell_type, batch_ids)
                 
                 # Convert to pseudo-counts if log-normalized
+                if batch_idx == 0:
+                    logger.info("Converting to pseudo-counts if needed...")
                 if x_pert.max() <= 25.0:
                     x_pert = torch.exp(x_pert) - 1
                     x_basal = torch.exp(x_basal) - 1
                 
                 # Compute loss
+                if batch_idx == 0:
+                    logger.info("Computing loss...")
                 recon_loss, kl_loss = model.module.module.loss(
                     x_pert=x_pert,
                     encoder_outputs=encoder_outputs,
