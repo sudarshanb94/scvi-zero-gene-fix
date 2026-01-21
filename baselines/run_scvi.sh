@@ -58,7 +58,7 @@ mkdir -p /work/baselines/wandb_logs
 python -m state_sets_reproduce.train \
     data.kwargs.toml_config_path=/work/baselines/my_data_config.toml \
     data.kwargs.embed_key=null \
-    data.kwargs.basal_mapping_strategy=random \
+    data.kwargs.basal_mapping_strategy=batch \
     data.kwargs.output_space=gene \
     data.kwargs.num_workers=4 \
     data.kwargs.batch_col=donor_id \
